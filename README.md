@@ -1,5 +1,7 @@
 # [Telegram Desktop][telegram_desktop] – Official Messenger
 
+[![Join the chat at https://gitter.im/tdesktop/Lobby](https://badges.gitter.im/tdesktop/Lobby.svg)](https://gitter.im/tdesktop/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+
 This is the complete source code and the build instructions for the alpha version of the official desktop client for the [Telegram][telegram] messenger, based on the [Telegram API][telegram_api] and the [MTProto][telegram_proto] secure protocol.
 
 The source code is published under GPLv3 with OpenSSL exception, the license is available [here][license].
@@ -20,8 +22,6 @@ The source code is published under GPLv3 with OpenSSL exception, the license is 
 * libexif 0.6.20 ([LGPL](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.en.html))
 * LZMA SDK 9.20 ([public domain](http://www.7-zip.org/sdk.html))
 * liblzma ([public domain](http://tukaani.org/xz/))
-* Google Breakpad ([License](https://chromium.googlesource.com/breakpad/breakpad/+/master/LICENSE))
-* Google Crashpad ([Apache License 2.0](https://chromium.googlesource.com/crashpad/crashpad/+/master/LICENSE))
 * OpenAL Soft ([LGPL](http://kcat.strangesoft.net/openal.html))
 * Opus codec ([BSD license](http://www.opus-codec.org/license/))
 * FFmpeg ([LGPL](https://www.ffmpeg.org/legal.html))
@@ -33,7 +33,6 @@ The source code is published under GPLv3 with OpenSSL exception, the license is 
 * [XCode 7][xcode]
 * [XCode 7 for OS X 10.6 and 10.7][xcode_old]
 * [Qt Creator 3.5.1 Ubuntu][qtcreator]
-* [Using qmake on GNU/Linux][qmake]
 
 ## Projects in Telegram solution
 
@@ -48,6 +47,21 @@ The source code is published under GPLv3 with OpenSSL exception, the license is 
 * ### Packer
 
   Compiles given files to single update file, compresses it with lzma and signs with a private key. It is not built in **Debug** and **Release** configurations of Telegram solution, because private key is inaccessible.
+
+* ### Prepare
+
+  Prepares a release for deployment, puts all current files to deploy/{version} folder.
+
+  **Windows**:
+  * tsetup{version}.exe installer
+  * Telegram.exe
+  * Telegram.pdb (debug info for crash minidumps view)
+  * tupdate{updversion} binary lzma update archive
+
+  **Mac**:
+  * tsetup{version}.dmg
+  * Telegram.app
+  * tmacupd{updversion} binary lzma update archive
 
 * ### MetaEmoji
 
@@ -90,8 +104,7 @@ The source code is published under GPLv3 with OpenSSL exception, the license is 
 [telegram_api]: https://core.telegram.org
 [telegram_proto]: https://core.telegram.org/mtproto
 [license]: LICENSE
-[msvc]: doc/building-msvc.md
-[xcode]: doc/building-xcode.md
-[xcode_old]: doc/building-xcode-old.md
-[qtcreator]: doc/building-qtcreator.md
-[qmake]: doc/building-qmake.md
+[msvc]: MSVC.md
+[xcode]: XCODE.md
+[xcode_old]: XCODEold.md
+[qtcreator]: QTCREATOR.md
