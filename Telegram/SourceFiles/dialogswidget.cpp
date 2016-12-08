@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #include "stdafx.h"
 #include "style.h"
@@ -258,7 +258,7 @@ void DialogsInner::peopleResultPaint(PeerData *peer, Painter &p, int32 w, bool a
 	QRect rectForName(nameleft, st::dlgPaddingVer + st::dlgNameTop, namewidth, st::msgNameFont->height);
 
 	// draw chat icon
-	if (peer->isChat()) {
+	if (peer->isChat() || peer->isMegagroup()) {
 		p.drawPixmap(QPoint(rectForName.left() + st::dlgChatImgPos.x(), rectForName.top() + st::dlgChatImgPos.y()), App::sprite(), (act ? st::dlgActiveChatImg : st::dlgChatImg));
 		rectForName.setLeft(rectForName.left() + st::dlgImgSkip);
 	} else if (peer->isChannel()) {
@@ -443,16 +443,12 @@ void DialogsInner::onDialogRowReplaced(DialogRow *oldRow, DialogRow *newRow) {
 }
 
 void DialogsInner::createDialog(History *history) {
-	bool creating = history->dialogs.isEmpty();
+	bool creating = !history->inChatList();
 	if (creating) {
-		history->dialogs = dialogs.addToEnd(history);
-		contactsNoDialogs.del(history->peer, history->dialogs[0]);
+		DialogRow *mainRow = history->addToChatList(dialogs);
+		contactsNoDialogs.del(history->peer, mainRow);
 	}
-
-	History::DialogLinks links = history->dialogs;
-	int32 movedFrom = links[0]->pos * st::dlgHeight;
-	dialogs.adjustByPos(links);
-	int32 movedTo = links[0]->pos * st::dlgHeight;
+	RefPair(int32, movedFrom, int32, movedTo) = history->adjustByPosInChatsList(dialogs);
 
 	emit dialogMoved(movedFrom, movedTo);
 
@@ -471,8 +467,7 @@ void DialogsInner::removeDialog(History *history) {
 	if (sel && sel->history == history) {
 		sel = 0;
 	}
-	dialogs.del(history->peer);
-	history->dialogs = History::DialogLinks();
+	history->removeFromChatList(dialogs);
 	history->clearNotifications();
 	if (App::wnd()) App::wnd()->notifyClear(history);
 	if (contacts.list.rowByPeer.constFind(history->peer->id) != contacts.list.rowByPeer.cend()) {
@@ -550,8 +545,8 @@ void DialogsInner::updateSelectedRow(PeerData *peer) {
 	if (_state == DefaultState) {
 		if (peer) {
 			if (History *h = App::historyLoaded(peer->id)) {
-				if (h->dialogs.contains(0)) {
-					update(0, h->dialogs.value(0)->pos * st::dlgHeight, fullWidth(), st::dlgHeight);
+				if (h->inChatList()) {
+					update(0, h->posInChatList() * st::dlgHeight, fullWidth(), st::dlgHeight);
 				}
 			}
 		} else if (sel) {
@@ -651,7 +646,7 @@ void DialogsInner::onContextProfile() {
 
 void DialogsInner::onContextToggleNotifications() {
 	if (!_menuPeer) return;
-	App::main()->updateNotifySetting(_menuPeer, menuPeerMuted());
+	App::main()->updateNotifySetting(_menuPeer, menuPeerMuted() ? NotifySettingSetNotify : NotifySettingSetMuted);
 }
 
 void DialogsInner::onContextSearch() {
@@ -963,7 +958,9 @@ void DialogsInner::dialogsReceived(const QVector<MTPDialog> &added) {
 		case mtpc_dialog: {
 			const MTPDdialog &d(i->c_dialog());
 			history = App::historyFromDialog(peerFromMTP(d.vpeer), d.vunread_count.v, d.vread_inbox_max_id.v);
-			App::main()->applyNotifySetting(MTP_notifyPeer(d.vpeer), d.vnotify_settings, history);
+			if (App::main()) {
+				App::main()->applyNotifySetting(MTP_notifyPeer(d.vpeer), d.vnotify_settings, history);
+			}
 		} break;
 
 		case mtpc_dialogChannel: {
@@ -986,7 +983,9 @@ void DialogsInner::dialogsReceived(const QVector<MTPDialog> &added) {
 			if (!history->isMegagroup() && d.vtop_message.v > d.vtop_important_message.v) {
 				history->setNotLoadedAtBottom();
 			}
-			App::main()->applyNotifySetting(MTP_notifyPeer(d.vpeer), d.vnotify_settings, history);
+			if (App::main()) {
+				App::main()->applyNotifySetting(MTP_notifyPeer(d.vpeer), d.vnotify_settings, history);
+			}
 		} break;
 		}
 
@@ -1015,7 +1014,7 @@ void DialogsInner::addSavedPeersAfter(const QDateTime &date) {
 	SavedPeersByTime &saved(cRefSavedPeersByTime());
 	while (!saved.isEmpty() && (date.isNull() || date < saved.lastKey())) {
 		History *history = App::history(saved.last()->id);
-		history->setPosInDialogsDate(saved.lastKey());
+		history->setChatsListDate(saved.lastKey());
 		contactsNoDialogs.del(history->peer);
 		saved.remove(saved.lastKey(), saved.last());
 	}
@@ -1040,13 +1039,16 @@ bool DialogsInner::searchReceived(const QVector<MTPMessage> &messages, DialogsSe
 				_lastSearchDate = lastDateFound;
 			}
 		}
-		if (type == DialogsSearchFromStart || type == DialogsSearchFromOffset) {
-			_lastSearchPeer = item->history()->peer;
+		if (item) {
+			if (type == DialogsSearchFromStart || type == DialogsSearchFromOffset) {
+				_lastSearchPeer = item->history()->peer;
+			}
 		}
+		MsgId msgId = item ? item->id : idFromMessage(*i);
 		if (type == DialogsSearchMigratedFromStart || type == DialogsSearchMigratedFromOffset) {
-			_lastSearchMigratedId = item->id;
+			_lastSearchMigratedId = msgId;
 		} else {
-			_lastSearchId = item->id;
+			_lastSearchId = msgId;
 		}
 	}
 	if (type == DialogsSearchMigratedFromStart || type == DialogsSearchMigratedFromOffset) {
@@ -1067,8 +1069,11 @@ void DialogsInner::peopleReceived(const QString &query, const QVector<MTPPeer> &
 	_peopleResults.reserve(people.size());
 	for (QVector<MTPPeer>::const_iterator i = people.cbegin(), e = people.cend(); i != e; ++i) {
 		PeerId peerId = peerFromMTP(*i);
-		History *h = App::historyLoaded(peerId);
-		if (h && !h->dialogs.isEmpty()) continue; // skip dialogs
+		if (History *h = App::historyLoaded(peerId)) {
+			if (h->inChatList()) {
+				continue; // skip existing chats
+			}
+		}
 
 		_peopleResults.push_back(App::peer(peerId));
 	}
@@ -1359,6 +1364,8 @@ void DialogsInner::selectSkipPage(int32 pixels, int32 direction) {
 }
 
 void DialogsInner::loadPeerPhotos(int32 yFrom) {
+	if (!parentWidget()) return;
+
 	int32 yTo = yFrom + parentWidget()->height() * 5;
 	MTP::clearLoaderPriorities();
 	if (_state == DefaultState) {
@@ -1515,6 +1522,11 @@ void DialogsInner::destroyData() {
 }
 
 void DialogsInner::peerBefore(const PeerData *inPeer, MsgId inMsg, PeerData *&outPeer, MsgId &outMsg) const {
+	if (!inPeer) {
+		outPeer = 0;
+		outMsg = 0;
+		return;
+	}
 	if (_state == DefaultState) {
 		DialogsList::RowByPeer::const_iterator i = dialogs.list.rowByPeer.constFind(inPeer->id);
 		if (i == dialogs.list.rowByPeer.constEnd()) {
@@ -1599,6 +1611,11 @@ void DialogsInner::peerBefore(const PeerData *inPeer, MsgId inMsg, PeerData *&ou
 }
 
 void DialogsInner::peerAfter(const PeerData *inPeer, MsgId inMsg, PeerData *&outPeer, MsgId &outMsg) const {
+	if (!inPeer) {
+		outPeer = 0;
+		outMsg = 0;
+		return;
+	}
 	if (_state == DefaultState) {
 		DialogsList::RowByPeer::const_iterator i = dialogs.list.rowByPeer.constFind(inPeer->id);
 		if (i == dialogs.list.rowByPeer.constEnd()) {
@@ -1777,11 +1794,11 @@ void DialogsWidget::activate() {
 }
 
 void DialogsWidget::createDialog(History *history) {
-	bool creating = history->dialogs.isEmpty();
+	bool creating = !history->inChatList();
 	_inner.createDialog(history);
 	if (creating && history->peer->migrateFrom()) {
 		if (History *h = App::historyLoaded(history->peer->migrateFrom()->id)) {
-			if (!h->dialogs.isEmpty()) {
+			if (h->inChatList()) {
 				removeDialog(h);
 			}
 		}
@@ -2268,7 +2285,7 @@ void DialogsWidget::dragEnterEvent(QDragEnterEvent *e) {
 	_dragForward = e->mimeData()->hasFormat(qsl("application/x-td-forward-selected"));
 	if (!_dragForward) _dragForward = e->mimeData()->hasFormat(qsl("application/x-td-forward-pressed-link"));
 	if (!_dragForward) _dragForward = e->mimeData()->hasFormat(qsl("application/x-td-forward-pressed"));
-	if (_dragForward && !cWideMode()) _dragForward = false;
+	if (_dragForward && Adaptive::OneColumn()) _dragForward = false;
 	if (_dragForward) {
 		e->setDropAction(Qt::CopyAction);
 		e->accept();
@@ -2540,7 +2557,7 @@ bool DialogsWidget::onCancelSearch() {
 		_searchRequest = 0;
 	}
 	if (_searchInPeer && !clearing) {
-		if (!cWideMode()) {
+		if (Adaptive::OneColumn()) {
 			Ui::showPeerHistory(_searchInPeer, ShowAtUnreadMsgId);
 		}
 		_searchInPeer = _searchInMigrated = 0;
@@ -2560,7 +2577,7 @@ void DialogsWidget::onCancelSearchInPeer() {
 		_searchRequest = 0;
 	}
 	if (_searchInPeer) {
-		if (!cWideMode() && !App::main()->selectingPeer()) {
+		if (Adaptive::OneColumn() && !App::main()->selectingPeer()) {
 			Ui::showPeerHistory(_searchInPeer, ShowAtUnreadMsgId);
 		}
 		_searchInPeer = _searchInMigrated = 0;
@@ -2570,7 +2587,7 @@ void DialogsWidget::onCancelSearchInPeer() {
 	_filter.clear();
 	_filter.updatePlaceholder();
 	onFilterUpdate();
-	if (cWideMode() && !App::main()->selectingPeer()) {
+	if (!Adaptive::OneColumn() && !App::main()->selectingPeer()) {
 		emit cancelled();
 	}
 }

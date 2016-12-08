@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
@@ -48,7 +48,7 @@ public:
 
 	PeerData *peer() const;
 	bool allMediaShown() const;
-	
+
 	void updateOnlineDisplay();
 	void updateOnlineDisplayTimer();
 	void reorderParticipants();
@@ -65,7 +65,7 @@ public:
 	void allowDecreaseHeight(int32 decreaseBy);
 
 	~ProfileInner();
-	
+
 public slots:
 
 	void peerUpdated(PeerData *data);
@@ -222,12 +222,12 @@ public:
 
 	ProfileWidget(QWidget *parent, PeerData *peer);
 
-	void resizeEvent(QResizeEvent *e);
-	void mousePressEvent(QMouseEvent *e);
-	void paintEvent(QPaintEvent *e);
-    void dragEnterEvent(QDragEnterEvent *e);
-    void dropEvent(QDropEvent *e);
-	void keyPressEvent(QKeyEvent *e);
+	void resizeEvent(QResizeEvent *e) override;
+	void mousePressEvent(QMouseEvent *e) override;
+	void paintEvent(QPaintEvent *e) override;
+    void dragEnterEvent(QDragEnterEvent *e) override;
+    void dropEvent(QDropEvent *e) override;
+	void keyPressEvent(QKeyEvent *e) override;
 
 	void paintTopBar(QPainter &p, float64 over, int32 decreaseWidth);
 	void topBarClick();
@@ -245,17 +245,21 @@ public:
 
 	void updateNotifySettings();
 	void mediaOverviewUpdated(PeerData *peer, MediaOverviewType type);
-	void updateWideMode();
+	void updateAdaptiveLayout();
 
-	void grabStart() {
+	void grabStart() override {
 		_sideShadow.hide();
 		_inGrab = true;
 		resizeEvent(0);
 	}
-	void grabFinish() {
-		_sideShadow.setVisible(cWideMode());
+	void grabFinish() override {
+		_sideShadow.setVisible(!Adaptive::OneColumn());
 		_inGrab = false;
 		resizeEvent(0);
+	}
+	void rpcClear() override {
+		_inner.rpcClear();
+		RPCSender::rpcClear();
 	}
 
 	void clear();

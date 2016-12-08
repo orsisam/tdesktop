@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #include "stdafx.h"
 #include "lang.h"
@@ -179,7 +179,7 @@ void MediaView::moveToScreen() {
 	}
 
 	QPoint wndCenter(App::wnd()->x() + App::wnd()->width() / 2, App::wnd()->y() + App::wnd()->height() / 2);
-	QRect avail = App::app() ? App::app()->desktop()->screenGeometry(wndCenter) : QDesktopWidget().screenGeometry(wndCenter);
+	QRect avail = Sandbox::screenGeometry(wndCenter);
 	if (avail != geometry()) {
 		setGeometry(avail);
 	}
@@ -363,7 +363,7 @@ void MediaView::updateControls() {
 		_dateNav = myrtlrect(st::mvTextLeft, height() - st::mvTextTop, st::mvFont->width(_dateText), st::mvFont->height);
 	}
 	updateHeader();
-	if (_photo || (_history && (_overview == OverviewPhotos || _overview == OverviewDocuments))) {
+	if (_photo || (_history && (_overview == OverviewPhotos || _overview == OverviewFiles))) {
 		_leftNavVisible = (_index > 0) || (_index == 0 && (
 			(!_msgmigrated && _history && _history->overview[_overview].size() < _history->overviewCount(_overview)) ||
 			(_msgmigrated && _migrated && _migrated->overview[_overview].size() < _migrated->overviewCount(_overview)) ||
@@ -398,7 +398,7 @@ void MediaView::updateDropdown() {
 	_btnSaveAs->setVisible(true);
 	_btnCopy->setVisible((_doc && fileShown()) || (_photo && _photo->loaded()));
 	_btnForward->setVisible(_canForward);
-	_btnDelete->setVisible(_canDelete || (_photo && App::self() && App::self()->photoId == _photo->id) || (_photo && _photo->peer && _photo->peer->photoId == _photo->id && (_photo->peer->isChat() || (_photo->peer->isChannel() && _photo->peer->asChannel()->amCreator()))));
+	_btnDelete->setVisible(_canDelete || (_photo && App::self() && _user == App::self()) || (_photo && _photo->peer && _photo->peer->photoId == _photo->id && (_photo->peer->isChat() || (_photo->peer->isChannel() && _photo->peer->asChannel()->amCreator()))));
 	_btnViewAll->setVisible((_overview != OverviewCount) && _history);
 	_btnViewAll->setText(lang(_doc ? lng_mediaview_files_all : lng_mediaview_photos_all));
 	_dropdown.updateButtons();
@@ -586,7 +586,7 @@ void MediaView::onSaveAs() {
 		}
 	}
 	activateWindow();
-	App::app()->setActiveWindow(this);
+	Sandbox::setActiveWindow(this);
 	setFocus();
 }
 
@@ -707,6 +707,21 @@ void MediaView::onDelete() {
 	if (!_msgid) {
 		if (App::self() && _photo && App::self()->photoId == _photo->id) {
 			App::app()->peerClearPhoto(App::self()->id);
+		} else if (_user && _user == App::self()) {
+			for (int32 i = 0, l = _user->photos.size(); i != l; ++i) {
+				if (_user->photos.at(i) == _photo) {
+					_user->photos.removeAt(i);
+					MTP::send(MTPphotos_DeletePhotos(MTP_vector<MTPInputPhoto>(1, MTP_inputPhoto(MTP_long(_photo->id), MTP_long(_photo->access)))), rpcDone(&MediaView::deletePhotosDone), rpcFail(&MediaView::deletePhotosFail));
+					if (_user->photos.isEmpty()) {
+						hide();
+					} else if (i + 1 < l) {
+						showPhoto(_user->photos.at(i), _user);
+					} else {
+						showPhoto(_user->photos.at(i - 1), _user);
+					}
+					break;
+				}
+			}
 		} else if (_photo->peer && _photo->peer->photoId == _photo->id) {
 			App::app()->peerClearPhoto(_photo->peer->id);
 		}
@@ -865,7 +880,7 @@ void MediaView::showDocument(DocumentData *doc, HistoryItem *context) {
 	_canForward = _msgid > 0;
 	_canDelete = context ? context->canDelete() : false;
 	if (_history) {
-		_overview = OverviewDocuments;
+		_overview = OverviewFiles;
 		findCurrent();
 	}
 	displayDocument(doc, context);
@@ -883,7 +898,7 @@ void MediaView::displayPhoto(PhotoData *photo, HistoryItem *item) {
 	_caption = Text();
 	if (HistoryMessage *itemMsg = item ? item->toHistoryMessage() : 0) {
 		if (HistoryPhoto *photoMsg = dynamic_cast<HistoryPhoto*>(itemMsg->getMedia())) {
-			_caption.setText(st::mvCaptionFont, photoMsg->getCaption(), (item->from()->isUser() && item->from()->asUser()->botInfo) ? _captionBotOptions : _captionTextOptions);
+			_caption.setText(st::mvCaptionFont, photoMsg->getCaption(), (item->author()->isUser() && item->author()->asUser()->botInfo) ? _captionBotOptions : _captionTextOptions);
 		}
 	}
 
@@ -909,11 +924,7 @@ void MediaView::displayPhoto(PhotoData *photo, HistoryItem *item) {
 	_y = (height() - _h) / 2;
 	_width = _w;
 	if (_msgid && item) {
-		if (HistoryForwarded *fwd = item->toHistoryForwarded()) {
-			_from = fwd->fromForwarded();
-		} else {
-			_from = item->from();
-		}
+		_from = item->authorOriginal();
 	} else {
 		_from = _user;
 	}
@@ -1062,11 +1073,7 @@ void MediaView::displayDocument(DocumentData *doc, HistoryItem *item) { // empty
 	}
 	_x = (width() - _w) / 2;
 	_y = (height() - _h) / 2;
-	if (HistoryForwarded *fwd = item->toHistoryForwarded()) {
-		_from = fwd->fromForwarded();
-	} else {
-		_from = item->from();
-	}
+	_from = item->authorOriginal();
 	_full = 1;
 	updateControls();
 	if (isHidden()) {
@@ -1074,7 +1081,7 @@ void MediaView::displayDocument(DocumentData *doc, HistoryItem *item) { // empty
 		show();
 		psShowOverAll(this);
 		activateWindow();
-		App::app()->setActiveWindow(this);
+		Sandbox::setActiveWindow(this);
 		setFocus();
 	}
 }
@@ -1486,7 +1493,7 @@ void MediaView::keyPressEvent(QKeyEvent *e) {
 }
 
 void MediaView::moveToNext(int32 delta) {
-	if (_index < 0 || (_history && _overview != OverviewPhotos && _overview != OverviewDocuments) || (_overview == OverviewCount && !_user)) {
+	if (_index < 0 || (_history && _overview != OverviewPhotos && _overview != OverviewFiles) || (_overview == OverviewCount && !_user)) {
 		return;
 	}
 	if (_msgmigrated && !_history->overviewLoaded(_overview)) {
@@ -1515,7 +1522,7 @@ void MediaView::moveToNext(int32 delta) {
 				if (HistoryMedia *media = item->getMedia()) {
 					switch (media->type()) {
 					case MediaTypePhoto: displayPhoto(static_cast<HistoryPhoto*>(item->getMedia())->photo(), item); preloadData(delta); break;
-					case MediaTypeDocument:
+					case MediaTypeFile:
 					case MediaTypeGif:
 					case MediaTypeSticker: displayDocument(media->getDocument(), item); preloadData(delta); break;
 					}
@@ -1562,7 +1569,7 @@ void MediaView::preloadData(int32 delta) {
 				if (HistoryMedia *media = item->getMedia()) {
 					switch (media->type()) {
 					case MediaTypePhoto: static_cast<HistoryPhoto*>(media)->photo()->forget(); break;
-					case MediaTypeDocument:
+					case MediaTypeFile:
 					case MediaTypeGif:
 					case MediaTypeSticker: media->getDocument()->forget(); break;
 					}
@@ -1587,7 +1594,7 @@ void MediaView::preloadData(int32 delta) {
 					if (HistoryMedia *media = item->getMedia()) {
 						switch (media->type()) {
 						case MediaTypePhoto: static_cast<HistoryPhoto*>(media)->photo()->download(); break;
-						case MediaTypeDocument:
+						case MediaTypeFile:
 						case MediaTypeGif: {
 							DocumentData *doc = media->getDocument();
 							doc->thumb->load();
@@ -1990,7 +1997,7 @@ void MediaView::onCheckActive() {
 	if (App::wnd() && isVisible()) {
 		if (App::wnd()->isActiveWindow() && App::wnd()->hasFocus()) {
 			activateWindow();
-			App::app()->setActiveWindow(this);
+			Sandbox::setActiveWindow(this);
 			setFocus();
 		}
 	}
@@ -2096,6 +2103,15 @@ void MediaView::userPhotosLoaded(UserData *u, const MTPphotos_Photos &photos, mt
 		u->photos.push_back(photo);
 	}
 	if (App::wnd()) App::wnd()->mediaOverviewUpdated(u, OverviewCount);
+}
+
+void MediaView::deletePhotosDone(const MTPVector<MTPlong> &result) {
+}
+
+bool MediaView::deletePhotosFail(const RPCError &error) {
+	if (mtpIsFlood(error)) return false;
+
+	return true;
 }
 
 void MediaView::updateHeader() {

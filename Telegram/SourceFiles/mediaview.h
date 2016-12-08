@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
@@ -107,7 +107,9 @@ private:
 	void loadBack();
 
 	void userPhotosLoaded(UserData *u, const MTPphotos_Photos &photos, mtpRequestId req);
-	void filesLoaded(History *h, const MTPmessages_Messages &msgs, mtpRequestId req);
+
+	void deletePhotosDone(const MTPVector<MTPlong> &result);
+	bool deletePhotosFail(const RPCError &error);
 
 	void updateHeader();
 	void snapXY();

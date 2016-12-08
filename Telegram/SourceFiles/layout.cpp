@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #include "stdafx.h"
 #include "style.h"
@@ -293,9 +293,9 @@ void LayoutAbstractFileItem::setStatusSize(int32 newSize, int32 fullSize, int32 
 	}
 }
 
-LayoutOverviewDate::LayoutOverviewDate(const QDate &date, bool month)
-	: _date(date)
-	, _text(month ? langMonthFull(date) : langDayOfMonthFull(date)) {
+LayoutOverviewDate::LayoutOverviewDate(const QDate &date, bool month) : LayoutItem(OverviewItemInfo::Bit())
+, _date(date)
+, _text(month ? langMonthFull(date) : langDayOfMonthFull(date)) {
 }
 
 void LayoutOverviewDate::initDimensions() {
@@ -311,7 +311,7 @@ void LayoutOverviewDate::paint(Painter &p, const QRect &clip, uint32 selection, 
 	}
 }
 
-LayoutOverviewPhoto::LayoutOverviewPhoto(PhotoData *photo, HistoryItem *parent) : LayoutMediaItem(parent)
+LayoutOverviewPhoto::LayoutOverviewPhoto(PhotoData *photo, HistoryItem *parent) : LayoutMediaItem(0, parent)
 , _data(photo)
 , _link(new PhotoLink(photo))
 , _goodLoaded(false) {
@@ -385,11 +385,11 @@ void LayoutOverviewPhoto::getState(TextLinkPtr &link, HistoryCursorState &cursor
 	}
 }
 
-LayoutOverviewVideo::LayoutOverviewVideo(VideoData *video, HistoryItem *parent) : LayoutAbstractFileItem(parent)
+LayoutOverviewVideo::LayoutOverviewVideo(DocumentData *video, HistoryItem *parent) : LayoutAbstractFileItem(0, parent)
 , _data(video)
-, _duration(formatDurationText(_data->duration))
+, _duration(formatDurationText(_data->duration()))
 , _thumbLoaded(false) {
-	setLinks(new VideoOpenLink(_data), new VideoSaveLink(_data), new VideoCancelLink(_data));
+	setLinks(new DocumentOpenLink(_data), new DocumentSaveLink(_data), new DocumentCancelLink(_data));
 }
 
 void LayoutOverviewVideo::initDimensions() {
@@ -422,8 +422,7 @@ void LayoutOverviewVideo::paint(Painter &p, const QRect &clip, uint32 selection,
 
 		if (_thumbLoaded && !_data->thumb->isNull()) {
 			int32 size = _width * cIntRetinaFactor();
-			QImage img = _data->thumb->pix().toImage();
-			img = imageBlur(img);
+			QImage img = imageBlur(_data->thumb->pix().toImage());
 			if (img.width() == img.height()) {
 				if (img.width() != size) {
 					img = img.scaled(size, size, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
@@ -550,23 +549,25 @@ void LayoutOverviewVideo::updateStatusText() const {
 	}
 }
 
-LayoutOverviewAudio::LayoutOverviewAudio(AudioData *audio, HistoryItem *parent) : LayoutAbstractFileItem(parent)
-, _data(audio)
-, _namel(new AudioOpenLink(_data)) {
-	setLinks(new AudioOpenLink(_data), new AudioOpenLink(_data), new AudioCancelLink(_data));
+LayoutOverviewVoice::LayoutOverviewVoice(DocumentData *voice, HistoryItem *parent) : LayoutAbstractFileItem(OverviewItemInfo::Bit(), parent)
+, _data(voice)
+, _namel(new DocumentOpenLink(_data)) {
+	t_assert(_data->voice() != 0);
+
+	setLinks(new DocumentOpenLink(_data), new DocumentOpenLink(_data), new DocumentCancelLink(_data));
 	updateName();
 	QString d = textcmdLink(1, textRichPrepare(langDateTime(date(_data->date))));
 	TextParseOptions opts = { TextParseRichText, 0, 0, Qt::LayoutDirectionAuto };
-	_details.setText(st::normalFont, lng_date_and_duration(lt_date, d, lt_duration, formatDurationText(_data->duration)), opts);
+	_details.setText(st::normalFont, lng_date_and_duration(lt_date, d, lt_duration, formatDurationText(_data->voice()->duration)), opts);
 	_details.setLink(1, TextLinkPtr(new MessageLink(parent)));
 }
 
-void LayoutOverviewAudio::initDimensions() {
+void LayoutOverviewVoice::initDimensions() {
 	_maxw = st::profileMaxWidth;
 	_minh = st::msgFilePadding.top() + st::msgFileSize + st::msgFilePadding.bottom() + st::lineWidth;
 }
 
-void LayoutOverviewAudio::paint(Painter &p, const QRect &clip, uint32 selection, const PaintContext *context) const {
+void LayoutOverviewVoice::paint(Painter &p, const QRect &clip, uint32 selection, const PaintContext *context) const {
 	bool selected = (selection == FullSelection);
 
 	_data->automaticLoad(_parent);
@@ -579,8 +580,7 @@ void LayoutOverviewAudio::paint(Painter &p, const QRect &clip, uint32 selection,
 		}
 	}
 	bool showPause = updateStatusText();
-	int32 nameVersion = _parent->from()->nameVersion;
-	if (HistoryForwarded *fwd = _parent->toHistoryForwarded()) nameVersion = fwd->fromForwarded()->nameVersion;
+	int32 nameVersion = _parent->fromOriginal()->nameVersion;
 	if (nameVersion > _nameVersion) {
 		updateName();
 	}
@@ -666,7 +666,7 @@ void LayoutOverviewAudio::paint(Painter &p, const QRect &clip, uint32 selection,
 	}
 }
 
-void LayoutOverviewAudio::getState(TextLinkPtr &link, HistoryCursorState &cursor, int32 x, int32 y) const {
+void LayoutOverviewVoice::getState(TextLinkPtr &link, HistoryCursorState &cursor, int32 x, int32 y) const {
 	bool loaded = _data->loaded();
 
 	bool showPause = updateStatusText();
@@ -696,19 +696,22 @@ void LayoutOverviewAudio::getState(TextLinkPtr &link, HistoryCursorState &cursor
 	}
 }
 
-void LayoutOverviewAudio::updateName() const {
+void LayoutOverviewVoice::updateName() const {
 	int32 version = 0;
-	if (HistoryForwarded *fwd = _parent->toHistoryForwarded()) {
-		_name.setText(st::semiboldFont, lang(lng_forwarded_from) + ' ' + App::peerName(fwd->fromForwarded()), _textNameOptions);
-		version = fwd->fromForwarded()->nameVersion;
+	if (const HistoryMessageForwarded *fwd = _parent->Get<HistoryMessageForwarded>()) {
+		if (_parent->fromOriginal()->isChannel()) {
+			_name.setText(st::semiboldFont, lng_forwarded_channel(lt_channel, App::peerName(_parent->fromOriginal())), _textNameOptions);
+		} else {
+			_name.setText(st::semiboldFont, lng_forwarded(lt_user, App::peerName(_parent->fromOriginal())), _textNameOptions);
+		}
 	} else {
 		_name.setText(st::semiboldFont, App::peerName(_parent->from()), _textNameOptions);
-		version = _parent->from()->nameVersion;
 	}
+	version = _parent->fromOriginal()->nameVersion;
 	_nameVersion = version;
 }
 
-bool LayoutOverviewAudio::updateStatusText() const {
+bool LayoutOverviewVoice::updateStatusText() const {
 	bool showPause = false;
 	int32 statusSize = 0, realDuration = 0;
 	if (_data->status == FileDownloadFailed || _data->status == FileUploadFailed) {
@@ -733,12 +736,12 @@ bool LayoutOverviewAudio::updateStatusText() const {
 		statusSize = FileStatusSizeReady;
 	}
 	if (statusSize != _statusSize) {
-		setStatusSize(statusSize, _data->size, _data->duration, realDuration);
+		setStatusSize(statusSize, _data->size, _data->voice()->duration, realDuration);
 	}
 	return showPause;
 }
 
-LayoutOverviewDocument::LayoutOverviewDocument(DocumentData *document, HistoryItem *parent) : LayoutAbstractFileItem(parent)
+LayoutOverviewDocument::LayoutOverviewDocument(DocumentData *document, HistoryItem *parent) : LayoutAbstractFileItem(OverviewItemInfo::Bit(), parent)
 , _data(document)
 , _msgl(new MessageLink(parent))
 , _namel(new DocumentOpenLink(_data))
@@ -754,7 +757,7 @@ LayoutOverviewDocument::LayoutOverviewDocument(DocumentData *document, HistoryIt
 
 	if (withThumb()) {
 		_data->thumb->load();
-		int32 tw = _data->thumb->width(), th = _data->thumb->height();
+		int32 tw = convertScale(_data->thumb->width()), th = convertScale(_data->thumb->height());
 		if (tw > th) {
 			_thumbw = (tw * st::overviewFileSize) / th;
 		} else {
@@ -764,10 +767,10 @@ LayoutOverviewDocument::LayoutOverviewDocument(DocumentData *document, HistoryIt
 		_thumbw = 0;
 	}
 
-	_extw = st::semiboldFont->width(_ext);
-	if (_extw > st::overviewFileSize - st::msgFileExtPadding * 2) {
-		_ext = st::semiboldFont->elided(_ext, st::overviewFileSize - st::msgFileExtPadding * 2, Qt::ElideMiddle);
-		_extw = st::semiboldFont->width(_ext);
+	_extw = st::overviewFileExtFont->width(_ext);
+	if (_extw > st::overviewFileSize - st::overviewFileExtPadding * 2) {
+		_ext = st::overviewFileExtFont->elided(_ext, st::overviewFileSize - st::overviewFileExtPadding * 2, Qt::ElideMiddle);
+		_extw = st::overviewFileExtFont->width(_ext);
 	}
 }
 
@@ -872,9 +875,9 @@ void LayoutOverviewDocument::paint(Painter &p, const QRect &clip, uint32 selecti
 			} else {
 				p.fillRect(rthumb, documentColor(_colorIndex));
 				if (!radial && loaded && !_ext.isEmpty()) {
-					p.setFont(st::semiboldFont);
+					p.setFont(st::overviewFileExtFont);
 					p.setPen(st::white);
-					p.drawText(rthumb.left() + (rthumb.width() - _extw) / 2, rthumb.top() + st::msgFileExtTop + st::semiboldFont->ascent, _ext);
+					p.drawText(rthumb.left() + (rthumb.width() - _extw) / 2, rthumb.top() + st::overviewFileExtTop + st::overviewFileExtFont->ascent, _ext);
 				}
 			}
 			if (selected) {
@@ -1061,7 +1064,7 @@ namespace {
 	}
 }
 
-LayoutOverviewLink::LayoutOverviewLink(HistoryMedia *media, HistoryItem *parent) : LayoutMediaItem(parent)
+LayoutOverviewLink::LayoutOverviewLink(HistoryMedia *media, HistoryItem *parent) : LayoutMediaItem(OverviewItemInfo::Bit(), parent)
 , _titlew(0)
 , _page(0)
 , _pixw(0)
@@ -1319,8 +1322,8 @@ LayoutOverviewLink::Link::Link(const QString &url, const QString &text)
 , lnk(linkFromUrl(url)) {
 }
 
-LayoutInlineItem::LayoutInlineItem(InlineResult *result, DocumentData *doc, PhotoData *photo)
-: _result(result)
+LayoutInlineItem::LayoutInlineItem(InlineResult *result, DocumentData *doc, PhotoData *photo) : LayoutItem(0)
+, _result(result)
 , _doc(doc)
 , _photo(photo)
 , _position(0) {
@@ -1649,7 +1652,7 @@ int32 LayoutInlineGif::content_width() const {
 			return doc->dimensions.width();
 		}
 		if (!doc->thumb->isNull()) {
-			return doc->thumb->width();
+			return convertScale(doc->thumb->width());
 		}
 	} else if (_result) {
 		return _result->width;
@@ -1664,7 +1667,7 @@ int32 LayoutInlineGif::content_height() const {
 			return doc->dimensions.height();
 		}
 		if (!doc->thumb->isNull()) {
-			return doc->thumb->height();
+			return convertScale(doc->thumb->height());
 		}
 	} else if (_result) {
 		return _result->height;
@@ -1918,7 +1921,7 @@ void LayoutInlineWebVideo::getState(TextLinkPtr &link, HistoryCursorState &curso
 void LayoutInlineWebVideo::prepareThumb(int32 width, int32 height) const {
 	if (_result->thumb->loaded()) {
 		if (_thumb.width() != width * cIntRetinaFactor() || _thumb.height() != height * cIntRetinaFactor()) {
-			int32 w = qMax(_result->thumb->width(), 1), h = qMax(_result->thumb->height(), 1);
+			int32 w = qMax(convertScale(_result->thumb->width()), 1), h = qMax(convertScale(_result->thumb->height()), 1);
 			if (w * height > h * width) {
 				if (height < h) {
 					w = w * height / h;
@@ -2066,7 +2069,7 @@ void LayoutInlineArticle::prepareThumb(int32 width, int32 height) const {
 
 	if (_result->thumb->loaded()) {
 		if (_thumb.width() != width * cIntRetinaFactor() || _thumb.height() != height * cIntRetinaFactor()) {
-			int32 w = qMax(_result->thumb->width(), 1), h = qMax(_result->thumb->height(), 1);
+			int32 w = qMax(convertScale(_result->thumb->width()), 1), h = qMax(convertScale(_result->thumb->height()), 1);
 			if (w * height > h * width) {
 				if (height < h) {
 					w = w * height / h;

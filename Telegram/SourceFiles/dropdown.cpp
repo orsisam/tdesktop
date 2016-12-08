@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #include "stdafx.h"
 
@@ -1698,6 +1698,7 @@ bool StickerPanInner::inlineRowFinalize(InlineRow &row, int32 &sumWidth, bool fo
 
 void StickerPanInner::refreshSavedGifs() {
 	if (_showingSavedGifs) {
+		_settings.hide();
 		clearInlineRows(false);
 		if (_showingInlineItems) {
 			const SavedGifs &saved(cSavedGifs());
@@ -1919,6 +1920,7 @@ int32 StickerPanInner::refreshInlineRows(UserData *bot, const InlineResults &res
 
 	_showingInlineItems = true;
 	_showingSavedGifs = false;
+	_settings.hide();
 
 	int32 count = results.size(), from = validateExistingInlineRows(results), added = 0;
 
@@ -3850,8 +3852,12 @@ MentionsInner::MentionsInner(MentionsDropdown *parent, MentionRows *mrows, Hasht
 , _stickersPerRow(1)
 , _recentInlineBotsInRows(0)
 , _sel(-1)
+, _down(-1)
 , _mouseSel(false)
-, _overDelete(false) {
+, _overDelete(false)
+, _previewShown(false) {
+	_previewTimer.setSingleShot(true);
+	connect(&_previewTimer, SIGNAL(timeout()), this, SLOT(onPreview()));
 }
 
 void MentionsInner::paintEvent(QPaintEvent *e) {
@@ -4013,9 +4019,9 @@ void MentionsInner::paintEvent(QPaintEvent *e) {
 				}
 			}
 		}
-		p.fillRect(cWideMode() ? st::lineWidth : 0, _parent->innerBottom() - st::lineWidth, width() - (cWideMode() ? st::lineWidth : 0), st::lineWidth, st::shadowColor->b);
+		p.fillRect(Adaptive::OneColumn() ? 0 : st::lineWidth, _parent->innerBottom() - st::lineWidth, width() - (Adaptive::OneColumn() ? 0 : st::lineWidth), st::lineWidth, st::shadowColor->b);
 	}
-	p.fillRect(cWideMode() ? st::lineWidth : 0, _parent->innerTop(), width() - (cWideMode() ? st::lineWidth : 0), st::lineWidth, st::shadowColor->b);
+	p.fillRect(Adaptive::OneColumn() ? 0 : st::lineWidth, _parent->innerTop(), width() - (Adaptive::OneColumn() ? 0 : st::lineWidth), st::lineWidth, st::shadowColor->b);
 }
 
 void MentionsInner::resizeEvent(QResizeEvent *e) {
@@ -4028,9 +4034,13 @@ void MentionsInner::mouseMoveEvent(QMouseEvent *e) {
 	onUpdateSelected(true);
 }
 
-void MentionsInner::clearSel() {
+void MentionsInner::clearSel(bool hidden) {
 	_mouseSel = _overDelete = false;
 	setSel((_mrows->isEmpty() && _brows->isEmpty() && _hrows->isEmpty()) ? -1 : 0);
+	if (hidden) {
+		_down = -1;
+		_previewShown = false;
+	}
 }
 
 bool MentionsInner::moveSel(int key) {
@@ -4064,6 +4074,7 @@ bool MentionsInner::select() {
 	if (!_srows->isEmpty()) {
 		if (_sel >= 0 && _sel < _srows->size()) {
 			emit selected(_srows->at(_sel));
+			return true;
 		}
 	} else {
 		QString sel = getSelected();
@@ -4137,10 +4148,33 @@ void MentionsInner::mousePressEvent(QMouseEvent *e) {
 
 			_mouseSel = true;
 			onUpdateSelected(true);
-		} else {
+		} else if (_srows->isEmpty()) {
 			select();
+		} else {
+			_down = _sel;
+			_previewTimer.start(QApplication::startDragTime());
 		}
 	}
+}
+
+void MentionsInner::mouseReleaseEvent(QMouseEvent *e) {
+	_previewTimer.stop();
+
+	int32 pressed = _down;
+	_down = -1;
+
+	_mousePos = mapToGlobal(e->pos());
+	_mouseSel = true;
+	onUpdateSelected(true);
+
+	if (_previewShown) {
+		_previewShown = false;
+		return;
+	}
+
+	if (_sel < 0 || _sel != pressed || _srows->isEmpty()) return;
+
+	select();
 }
 
 void MentionsInner::enterEvent(QEvent *e) {
@@ -4186,6 +4220,8 @@ void MentionsInner::onUpdateSelected(bool force) {
 	QPoint mouse(mapFromGlobal(_mousePos));
 	if ((!force && !rect().contains(mouse)) || !_mouseSel) return;
 
+	if (_down >= 0 && !_previewShown) return;
+
 	int32 sel = -1, maxSel = 0;
 	if (!_srows->isEmpty()) {
 		int32 rows = rowscount(_srows->size(), _stickersPerRow);
@@ -4206,6 +4242,12 @@ void MentionsInner::onUpdateSelected(bool force) {
 	}
 	if (sel != _sel) {
 		setSel(sel);
+		if (_down >= 0 && _sel >= 0 && _down != _sel) {
+			_down = _sel;
+			if (_down >= 0 && _down < _srows->size()) {
+				Ui::showStickerPreview(_srows->at(_down));
+			}
+		}
 	}
 }
 
@@ -4214,6 +4256,13 @@ void MentionsInner::onParentGeometryChanged() {
 	if (rect().contains(mapFromGlobal(_mousePos))) {
 		setMouseTracking(true);
 		onUpdateSelected(true);
+	}
+}
+
+void MentionsInner::onPreview() {
+	if (_down >= 0 && _down < _srows->size()) {
+		Ui::showStickerPreview(_srows->at(_down));
+		_previewShown = true;
 	}
 }
 
@@ -4320,7 +4369,7 @@ void MentionsDropdown::updateFiltered(bool resetScroll) {
 				if (it->emoji.isEmpty()) {
 					setsToRequest.insert(it->id, it->access);
 					it->flags |= MTPDstickerSet_flag_NOT_LOADED;
-				} else {
+				} else if (!(it->flags & MTPDstickerSet::flag_disabled)) {
 					StickersByEmojiMap::const_iterator i = it->emoji.constFind(emojiGetNoColor(_emoji));
 					if (i != it->emoji.cend()) {
 						srows += *i;
@@ -4566,7 +4615,7 @@ void MentionsDropdown::hideFinish() {
 	hide();
 	_hiding = false;
 	_filter = qsl("-");
-	_inner.clearSel();
+	_inner.clearSel(true);
 }
 
 void MentionsDropdown::showStart() {
@@ -4636,10 +4685,12 @@ bool MentionsDropdown::eventFilter(QObject *obj, QEvent *e) {
 	if (isHidden()) return QWidget::eventFilter(obj, e);
 	if (e->type() == QEvent::KeyPress) {
 		QKeyEvent *ev = static_cast<QKeyEvent*>(e);
-		if (ev->key() == Qt::Key_Up || ev->key() == Qt::Key_Down || (!_srows.isEmpty() && (ev->key() == Qt::Key_Left || ev->key() == Qt::Key_Right))) {
-			return _inner.moveSel(ev->key());
-		} else if (ev->key() == Qt::Key_Enter || ev->key() == Qt::Key_Return) {
-			return _inner.select();
+		if (!(ev->modifiers() & (Qt::AltModifier | Qt::ControlModifier | Qt::ShiftModifier | Qt::MetaModifier))) {
+			if (ev->key() == Qt::Key_Up || ev->key() == Qt::Key_Down || (!_srows.isEmpty() && (ev->key() == Qt::Key_Left || ev->key() == Qt::Key_Right))) {
+				return _inner.moveSel(ev->key());
+			} else if (ev->key() == Qt::Key_Enter || ev->key() == Qt::Key_Return) {
+				return _inner.select();
+			}
 		}
 	}
 	return QWidget::eventFilter(obj, e);

@@ -16,12 +16,12 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
 class OverviewWidget;
-class OverviewInner : public QWidget, public RPCSender {
+class OverviewInner : public QWidget, public AbstractTooltipShower, public RPCSender {
 	Q_OBJECT
 
 public:
@@ -71,24 +71,25 @@ public:
 	void changingMsgId(HistoryItem *row, MsgId newId);
 	void repaintItem(const HistoryItem *msg);
 	void itemRemoved(HistoryItem *item);
-	
+
 	void getSelectionState(int32 &selectedForForward, int32 &selectedForDelete) const;
 	void clearSelectedItems(bool onlyTextSelection = false);
 	void fillSelectedItems(SelectedItemSet &sel, bool forDelete = true);
+
+	// AbstractTooltipShower
+	virtual QString tooltipText() const;
+	virtual QPoint tooltipPos() const;
 
 	~OverviewInner();
 
 public slots:
 
 	void onUpdateSelected();
-	void showLinkTip();
 
-	void openContextUrl();
 	void copyContextUrl();
 	void cancelContextDownload();
 	void showContextInFolder();
 	void saveContextFile();
-	void openContextFile();
 
 	void goToMessage();
 	void deleteMessage();
@@ -145,7 +146,7 @@ private:
 	bool _reversed;
 	History *_migrated, *_history;
 	ChannelId _channel;
-	
+
 	bool _selMode;
 	uint32 itemSelectedValue(int32 index) const;
 
@@ -244,9 +245,9 @@ public:
 
 	void clear();
 
-	void resizeEvent(QResizeEvent *e);
-	void paintEvent(QPaintEvent *e);
-	void contextMenuEvent(QContextMenuEvent *e);
+	void resizeEvent(QResizeEvent *e) override;
+	void paintEvent(QPaintEvent *e) override;
+	void contextMenuEvent(QContextMenuEvent *e) override;
 
 	void scrollBy(int32 add);
 	void scrollReset();
@@ -268,35 +269,39 @@ public:
 	void animShow(const QPixmap &oldAnimCache, const QPixmap &bgAnimTopBarCache, bool back = false, int32 lastScrollTop = -1);
 	void step_show(float64 ms, bool timer);
 
-	void updateWideMode();
+	void updateAdaptiveLayout();
 	void doneShow();
 
 	void mediaOverviewUpdated(PeerData *peer, MediaOverviewType type);
 	void changingMsgId(HistoryItem *row, MsgId newId);
 	void itemRemoved(HistoryItem *item);
-	
+
 	QPoint clampMousePosition(QPoint point);
 
 	void checkSelectingScroll(QPoint point);
 	void noSelectingScroll();
 
 	bool touchScroll(const QPoint &delta);
-	
+
 	void fillSelectedItems(SelectedItemSet &sel, bool forDelete);
 
 	void updateScrollColors();
 
 	void updateAfterDrag();
 
-	void grabStart() {
+	void grabStart() override {
 		_sideShadow.hide();
 		_inGrab = true;
 		resizeEvent(0);
 	}
-	void grabFinish() {
-		_sideShadow.setVisible(cWideMode());
+	void grabFinish() override {
+		_sideShadow.setVisible(!Adaptive::OneColumn());
 		_inGrab = false;
 		resizeEvent(0);
+	}
+	void rpcClear() override {
+		_inner.rpcClear();
+		RPCSender::rpcClear();
 	}
 
 	void ui_repaintHistoryItem(const HistoryItem *item);

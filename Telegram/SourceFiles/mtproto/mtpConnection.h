@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
@@ -58,11 +58,13 @@ class MTPThread : public QThread {
 	Q_OBJECT
 
 public:
-	MTPThread(QObject *parent = 0);
+	MTPThread();
 	uint32 getThreadId() const;
+	~MTPThread();
 
 private:
-	uint32 threadId;
+	uint32 _threadId;
+
 };
 
 class MTProtoConnection {
@@ -75,8 +77,8 @@ public:
 
 	MTProtoConnection();
 	int32 start(MTPSessionData *data, int32 dc = 0); // return dc
-	void stop();
-	void stopped();
+	void kill();
+	void waitTillFinish();
 	~MTProtoConnection();
 
 	enum {
@@ -113,7 +115,8 @@ public:
 
 	virtual void sendData(mtpBuffer &buffer) = 0; // has size + 3, buffer[0] = len, buffer[1] = packetnum, buffer[last] = crc32
 	virtual void disconnectFromServer() = 0;
-	virtual void connectToServer(const QString &addr, int32 port, int32 flags) = 0;
+	virtual void connectTcp(const QString &addr, int32 port, int32 flags) = 0;
+	virtual void connectHttp(const QString &addr, int32 port, int32 flags) = 0;
 	virtual bool isConnected() const = 0;
 	virtual bool usingHttpWait() {
 		return false;
@@ -168,7 +171,7 @@ protected:
 	char *currentPos;
 	mtpBuffer longBuffer;
 	mtpPrime shortBuffer[MTPShortBufferSize];
-	virtual void socketPacket(mtpPrime *packet, uint32 packetSize) = 0;
+	virtual void socketPacket(const char *packet, uint32 length) = 0;
 
 };
 
@@ -181,7 +184,8 @@ public:
 
 	void sendData(mtpBuffer &buffer);
 	void disconnectFromServer();
-	void connectToServer(const QString &addr, int32 port, int32 flags);
+	void connectTcp(const QString &addr, int32 port, int32 flags);
+	void connectHttp(const QString &addr, int32 port, int32 flags);
 	bool isConnected() const;
 	bool usingHttpWait();
 	bool needHttpWait();
@@ -203,7 +207,7 @@ public slots:
 
 protected:
 
-	void socketPacket(mtpPrime *packet, uint32 packetSize);
+	void socketPacket(const char *packet, uint32 length);
 
 private:
 
@@ -228,8 +232,9 @@ private:
 	typedef QSet<QNetworkReply*> Requests;
 	Requests requests;
 
-	QString _addr;
-	int32 _port, _tcpTimeout, _flags;
+	QString _addrTcp, _addrHttp;
+	int32 _portTcp, _portHttp, _flagsTcp, _flagsHttp;
+	int32 _tcpTimeout;
 	QTimer tcpTimeoutTimer;
 
 };
@@ -243,7 +248,9 @@ public:
 
 	void sendData(mtpBuffer &buffer);
 	void disconnectFromServer();
-	void connectToServer(const QString &addr, int32 port, int32 flags);
+	void connectTcp(const QString &addr, int32 port, int32 flags);
+	void connectHttp(const QString &addr, int32 port, int32 flags) { // not supported
+	}
 	bool isConnected() const;
 
 	int32 debugState() const;
@@ -261,7 +268,7 @@ public slots:
 
 protected:
 
-	void socketPacket(mtpPrime *packet, uint32 packetSize);
+	void socketPacket(const char *packet, uint32 length);
 
 private:
 
@@ -285,10 +292,12 @@ class MTPhttpConnection : public MTPabstractConnection {
 public:
 
 	MTPhttpConnection(QThread *thread);
-	
+
 	void sendData(mtpBuffer &buffer);
 	void disconnectFromServer();
-	void connectToServer(const QString &addr, int32 port, int32 flags);
+	void connectTcp(const QString &addr, int32 port, int32 flags) { // not supported
+	}
+	void connectHttp(const QString &addr, int32 port, int32 flags);
 	bool isConnected() const;
 	bool usingHttpWait();
 	bool needHttpWait();
@@ -350,6 +359,8 @@ signals:
 	void resendAsync(quint64 msgId, quint64 msCanWait, bool forceContainer, bool sendMsgStateInfo);
 	void resendManyAsync(QVector<quint64> msgIds, quint64 msCanWait, bool forceContainer, bool sendMsgStateInfo);
 	void resendAllAsync();
+
+	void finished(MTProtoConnection *connection);
 
 public slots:
 
@@ -441,7 +452,7 @@ private:
 
 	// if badTime received - search for ids in sessionData->haveSent and sessionData->wereAcked and sync time/salt, return true if found
 	bool requestsFixTimeSalt(const QVector<MTPlong> &ids, int32 serverTime, uint64 serverSalt);
-	
+
 	// remove msgs with such ids from sessionData->haveSent, add to sessionData->wereAcked
 	void requestsAcked(const QVector<MTPlong> &ids, bool byResponse = false);
 
@@ -459,7 +470,7 @@ private:
 	template <typename TResponse>
 	bool readResponseNotSecure(TResponse &response);
 
-	bool restarted;
+	bool restarted, _finished;
 
 	uint64 keyId;
 	QReadWriteLock sessionDataMutex;
@@ -491,7 +502,7 @@ private:
 		MTPlong retry_id;
 
 		int32 g;
-		
+
 		uchar aesKey[32], aesIV[32];
 		uint32 auth_key[64];
 		MTPlong auth_key_hash;

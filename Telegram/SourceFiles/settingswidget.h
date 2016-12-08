@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
@@ -70,6 +70,8 @@ public:
 	void mouseMoveEvent(QMouseEvent *e);
 	void mousePressEvent(QMouseEvent *e);
 	void contextMenuEvent(QContextMenuEvent *e);
+
+	void updateAdaptiveLayout();
 
 	void step_photo(float64 ms, bool timer);
 
@@ -156,6 +158,7 @@ public slots:
 	void onBackFromGallery();
 	void onBackFromFile();
 	void onTileBackground();
+	void onAdaptiveForWide();
 
 	void onLocalStorageClear();
 
@@ -233,6 +236,7 @@ private:
 	QString _curVersionText, _newVersionText;
 	int32 _curVersionWidth, _newVersionWidth;
 
+#ifndef TDESKTOP_DISABLE_AUTOUPDATE
 	enum UpdatingState {
 		UpdatingNone,
 		UpdatingCheck,
@@ -243,6 +247,7 @@ private:
 	};
 	UpdatingState _updatingState;
 	QString _newVersionDownload;
+#endif
 
 	// chat options
 	FlatCheckbox _replaceEmojis;
@@ -271,7 +276,7 @@ private:
 	// chat background
 	QPixmap _background;
 	LinkButton _backFromGallery, _backFromFile;
-	FlatCheckbox _tileBackground;
+	FlatCheckbox _tileBackground, _adaptiveForWide;
 	bool _needBackgroundUpdate;
 
 	// advanced
@@ -296,12 +301,10 @@ private:
 	void offPasswordDone(const MTPBool &result);
 	bool offPasswordFail(const RPCError &error);
 
-	#ifndef TDESKTOP_DISABLE_AUTOUPDATE
+#ifndef TDESKTOP_DISABLE_AUTOUPDATE
 	void setUpdatingState(UpdatingState state, bool force = false);
 	void setDownloadProgress(qint64 ready, qint64 total);
-	#endif
-
-
+#endif
 };
 
 class SettingsWidget : public TWidget {
@@ -316,7 +319,7 @@ public:
 	void dragEnterEvent(QDragEnterEvent *e);
 	void dropEvent(QDropEvent *e);
 
-	void updateWideMode();
+	void updateAdaptiveLayout();
 
 	void animShow(const QPixmap &bgAnimCache, bool back = false);
 	void step_show(float64 ms, bool timer);
@@ -327,7 +330,7 @@ public:
 
 	void updateDisplayNotify();
 
-	void rpcInvalidate();
+	void rpcClear();
 	void usernameChanged();
 
 	void setInnerFocus();
@@ -338,7 +341,7 @@ public:
 public slots:
 
 	void onParentResize(const QSize &newSize);
-	
+
 private:
 
 	void showAll();

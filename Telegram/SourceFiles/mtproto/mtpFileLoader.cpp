@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #include "stdafx.h"
 #include "mainwidget.h"
@@ -349,9 +349,9 @@ mtpFileLoader::mtpFileLoader(const StorageImageLocation *location, int32 size, L
 , _location(location)
 , _id(0)
 , _access(0) {
-	LoaderQueues::iterator i = queues.find(MTP::dld[0] + _dc);
+	LoaderQueues::iterator i = queues.find(MTP::dld(0) + _dc);
 	if (i == queues.cend()) {
-		i = queues.insert(MTP::dld[0] + _dc, FileLoaderQueue(MaxFileQueries));
+		i = queues.insert(MTP::dld(0) + _dc, FileLoaderQueue(MaxFileQueries));
 	}
 	_queue = &i.value();
 }
@@ -365,9 +365,9 @@ mtpFileLoader::mtpFileLoader(int32 dc, const uint64 &id, const uint64 &access, L
 , _location(0)
 , _id(id)
 , _access(access) {
-	LoaderQueues::iterator i = queues.find(MTP::dld[0] + _dc);
+	LoaderQueues::iterator i = queues.find(MTP::dld(0) + _dc);
 	if (i == queues.cend()) {
-		i = queues.insert(MTP::dld[0] + _dc, FileLoaderQueue(MaxFileQueries));
+		i = queues.insert(MTP::dld(0) + _dc, FileLoaderQueue(MaxFileQueries));
 	}
 	_queue = &i.value();
 }
@@ -387,8 +387,8 @@ bool mtpFileLoader::loadPart() {
 		limit = DownloadPartSize;
 	} else {
 		switch (_locationType) {
-		case VideoFileLocation: loc = MTP_inputVideoFileLocation(MTP_long(_id), MTP_long(_access)); break;
-		case AudioFileLocation: loc = MTP_inputAudioFileLocation(MTP_long(_id), MTP_long(_access)); break;
+		case VideoFileLocation:
+		case AudioFileLocation:
 		case DocumentFileLocation: loc = MTP_inputDocumentFileLocation(MTP_long(_id), MTP_long(_access)); break;
 		default: cancel(true); return false; break;
 		}
@@ -405,7 +405,7 @@ bool mtpFileLoader::loadPart() {
 
 	App::app()->killDownloadSessionsStop(_dc);
 
-	mtpRequestId reqId = MTP::send(MTPupload_GetFile(MTPupload_getFile(loc, MTP_int(offset), MTP_int(limit))), rpcDone(&mtpFileLoader::partLoaded, offset), rpcFail(&mtpFileLoader::partFailed), MTP::dld[dcIndex] + _dc, 50);
+	mtpRequestId reqId = MTP::send(MTPupload_GetFile(MTPupload_getFile(loc, MTP_int(offset), MTP_int(limit))), rpcDone(&mtpFileLoader::partLoaded, offset), rpcFail(&mtpFileLoader::partFailed), MTP::dld(dcIndex) + _dc, 50);
 
 	++_queue->queries;
 	dr.v[dcIndex] += limit;
@@ -527,7 +527,7 @@ void mtpFileLoader::cancelRequests() {
 	_queue->queries -= _requests.size();
 	_requests.clear();
 
-	if (!_queue->queries) {
+	if (!_queue->queries && App::app()) {
 		App::app()->killDownloadSessionsStart(_dc);
 	}
 }
@@ -741,6 +741,7 @@ void reinitWebLoadManager() {
 void stopWebLoadManager() {
 	if (webLoadManager()) {
 		_webLoadThread->quit();
+		DEBUG_LOG(("Waiting for webloadThread to finish"));
 		_webLoadThread->wait();
 		delete _webLoadManager;
 		delete _webLoadMainManager;

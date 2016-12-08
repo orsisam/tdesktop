@@ -32,6 +32,20 @@ Install dev libraries
 
     sudo apt-get install libexif-dev liblzma-dev libz-dev libssl-dev libappindicator-dev libunity-dev
 
+####zlib 1.2.8
+
+http://www.zlib.net/ > Download [**zlib source code, version 1.2.8, zipfile format**](http://zlib.net/zlib128.zip)
+
+Extract to **/home/user/TBuild/Libraries**
+
+#####Building library
+
+In Terminal go to **/home/user/TBuild/Libraries/zlib-1.2.8** and run:
+
+        ./configure
+        make
+        sudo make install
+
 Install audio libraries
 
 ####Opus codec 1.1
@@ -87,6 +101,17 @@ then go to **/home/user/TBuild/Libraries/openal-soft/build** and run
     make
     sudo make install
 
+####OpenSSL
+
+In Terminal go to **/home/user/TBuild/Libraries** and run
+
+    git clone https://github.com/openssl/openssl
+    cd openssl
+    git checkout OpenSSL_1_0_1-stable
+    ./config
+    make
+    sudo make install
+
 ####libxkbcommon (required for Fcitx Qt plugin)
 
 In Terminal go to **/home/user/TBuild/Libraries** and run
@@ -122,11 +147,22 @@ Install some packages for Qt (see **/home/user/TBuild/Libraries/QtStatic/qtbase/
 
 In Terminal go to **/home/user/TBuild/Libraries/QtStatic** and there run
 
-    ./configure -release -opensource -confirm-license -qt-zlib -qt-libpng -qt-libjpeg -qt-freetype -qt-harfbuzz -qt-pcre -qt-xcb -qt-xkbcommon-x11 -no-opengl -static -nomake examples -nomake tests
+    OPENSSL_LIBS='/usr/local/ssl/lib/libssl.a /usr/local/ssl/lib/libcrypto.a' ./configure -release -opensource -confirm-license -qt-zlib -qt-libpng -qt-libjpeg -qt-freetype -qt-harfbuzz -qt-pcre -qt-xcb -qt-xkbcommon-x11 -no-opengl -static -openssl-linked -nomake examples -nomake tests
     make -j4
     sudo make -j4 install
 
 building (**make** command) will take really long time.
+
+####Google Breakpad
+
+In Terminal go to **/home/user/TBuild/Libraries** and run
+
+    git clone https://chromium.googlesource.com/breakpad/breakpad
+    git clone https://chromium.googlesource.com/linux-syscall-support breakpad/src/third_party/lss
+    cd breakpad
+    ./configure
+    make
+    sudo make install
 
 ###Building Telegram Desktop
 

@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
@@ -744,8 +744,9 @@ public:
 
 	void mousePressEvent(QMouseEvent *e);
 	void mouseMoveEvent(QMouseEvent *e);
+	void mouseReleaseEvent(QMouseEvent *e);
 
-	void clearSel();
+	void clearSel(bool hidden = false);
 	bool moveSel(int key);
 	bool select();
 
@@ -763,6 +764,7 @@ public slots:
 
 	void onParentGeometryChanged();
 	void onUpdateSelected(bool force = false);
+	void onPreview();
 
 private:
 
@@ -775,11 +777,15 @@ private:
 	BotCommandRows *_brows;
 	StickerPack *_srows;
 	int32 _stickersPerRow, _recentInlineBotsInRows;
-	int32 _sel;
+	int32 _sel, _down;
 	bool _mouseSel;
 	QPoint _mousePos;
 
 	bool _overDelete;
+
+	bool _previewShown;
+
+	QTimer _previewTimer;
 };
 
 class MentionsDropdown : public TWidget {

@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
@@ -33,7 +33,7 @@ enum DragState {
 };
 
 class HistoryWidget;
-class HistoryInner : public TWidget {
+class HistoryInner : public TWidget, public AbstractTooltipShower {
 	Q_OBJECT
 
 public:
@@ -97,6 +97,10 @@ public:
 	void notifyIsBotChanged();
 	void notifyMigrateUpdated();
 
+	// AbstractTooltipShower
+	virtual QString tooltipText() const;
+	virtual QPoint tooltipPos() const;
+
 	~HistoryInner();
 
 public slots:
@@ -104,15 +108,11 @@ public slots:
 	void onUpdateSelected();
 	void onParentGeometryChanged();
 
-	void showLinkTip();
-
-	void openContextUrl();
 	void copyContextUrl();
 	void saveContextImage();
 	void copyContextImage();
 	void cancelContextDownload();
 	void showContextInFolder();
-	void openContextFile();
 	void saveContextFile();
 	void saveContextGif();
 	void copyContextText();
@@ -149,8 +149,6 @@ private:
 	mutable int32 _curBlock, _curItem;
 
 	bool _firstLoading;
-
-	QTimer _tooltipTimer;
 
 	Qt::CursorShape _cursor;
 	typedef QMap<HistoryItem*, uint32> SelectedItems;
@@ -249,7 +247,7 @@ private:
 
 };
 
-class BotKeyboard : public TWidget {
+class BotKeyboard : public TWidget, public AbstractTooltipShower {
 	Q_OBJECT
 
 public:
@@ -277,9 +275,12 @@ public:
 		return _wasForMsgId;
 	}
 
+	// AbstractTooltipShower
+	virtual QString tooltipText() const;
+	virtual QPoint tooltipPos() const;
+
 public slots:
 
-	void showCommandTip();
 	void updateSelected();
 
 private:
@@ -290,7 +291,6 @@ private:
 	FullMsgId _wasForMsgId;
 	int32 _height, _maxOuterHeight;
 	bool _maximizeSize, _singleUse, _forceReply;
-	QTimer _cmdTipTimer;
 
 	QPoint _lastMousePos;
 	struct Button {
@@ -389,6 +389,20 @@ public:
 
 };
 
+class SilentToggle : public FlatCheckbox, public AbstractTooltipShower {
+public:
+
+	SilentToggle(QWidget *parent);
+	void mouseMoveEvent(QMouseEvent *e);
+	void mouseReleaseEvent(QMouseEvent *e);
+	void leaveEvent(QEvent *e);
+
+	// AbstractTooltipShower
+	virtual QString tooltipText() const;
+	virtual QPoint tooltipPos() const;
+
+};
+
 enum TextUpdateEventsFlags {
 	TextUpdateEventsSaveDraft  = 0x01,
 	TextUpdateEventsSendTyping = 0x02,
@@ -409,18 +423,18 @@ public:
 	void windowShown();
 	bool isActive() const;
 
-	void resizeEvent(QResizeEvent *e);
-	void keyPressEvent(QKeyEvent *e);
-	void mousePressEvent(QMouseEvent *e);
-	void paintEvent(QPaintEvent *e);
-    void dragEnterEvent(QDragEnterEvent *e);
-	void dragLeaveEvent(QDragLeaveEvent *e);
-	void leaveEvent(QEvent *e);
-    void dropEvent(QDropEvent *e);
-	void mouseReleaseEvent(QMouseEvent *e);
-	void mouseMoveEvent(QMouseEvent *e);
-	void leaveToChildEvent(QEvent *e);
-	void contextMenuEvent(QContextMenuEvent *e);
+	void resizeEvent(QResizeEvent *e) override;
+	void keyPressEvent(QKeyEvent *e) override;
+	void mousePressEvent(QMouseEvent *e) override;
+	void paintEvent(QPaintEvent *e) override;
+    void dragEnterEvent(QDragEnterEvent *e) override;
+	void dragLeaveEvent(QDragLeaveEvent *e) override;
+	void leaveEvent(QEvent *e) override;
+    void dropEvent(QDropEvent *e) override;
+	void mouseReleaseEvent(QMouseEvent *e) override;
+	void mouseMoveEvent(QMouseEvent *e) override;
+	void leaveToChildEvent(QEvent *e) override;
+	void contextMenuEvent(QContextMenuEvent *e) override;
 
 	void updateTopBarSelection();
 
@@ -484,7 +498,7 @@ public:
 	void step_show(float64 ms, bool timer);
 	void animStop();
 
-	void updateWideMode();
+	void updateAdaptiveLayout();
 	void doneShow();
 
 	QPoint clampMousePosition(QPoint point);
@@ -503,9 +517,10 @@ public:
 	void updateScrollColors();
 
 	MsgId replyToId() const;
-	void updateReplyTo(bool force = false);
+	void updateReplyEditTexts(bool force = false);
 	bool lastForceReplyReplied(const FullMsgId &replyTo = FullMsgId(NoChannel, -1)) const;
 	void cancelReply(bool lastKeyboardUsed = false);
+	void cancelEdit();
 	void updateForwarding(bool force = false);
 	void cancelForwarding(); // called by MainWidget
 
@@ -527,7 +542,7 @@ public:
 	void sendBotCommand(const QString &cmd, MsgId replyTo);
 	bool insertBotCommand(const QString &cmd, bool specialGif);
 
-	bool eventFilter(QObject *obj, QEvent *e);
+	bool eventFilter(QObject *obj, QEvent *e) override;
 	void updateBotKeyboard(History *h = 0);
 
 	DragState getDragState(const QMimeData *d);
@@ -554,13 +569,13 @@ public:
 
 	bool contentOverlapped(const QRect &globalRect);
 
-	void grabStart() {
+	void grabStart() override {
 		_sideShadow.hide();
 		_inGrab = true;
 		resizeEvent(0);
 	}
-	void grabFinish() {
-		_sideShadow.setVisible(cWideMode());
+	void grabFinish() override {
+		_sideShadow.setVisible(!Adaptive::OneColumn());
 		_inGrab = false;
 		resizeEvent(0);
 	}
@@ -581,6 +596,10 @@ public:
 	void notify_clipStopperHidden(ClipStopperType type);
 	void notify_historyItemResized(const HistoryItem *item, bool scrollToIt);
 
+	void cmd_search();
+	void cmd_next_chat();
+	void cmd_previous_chat();
+
 	~HistoryWidget();
 
 signals:
@@ -592,7 +611,9 @@ public slots:
 
 	void onCancel();
 	void onReplyToMessage();
-	void onReplyForwardPreviewCancel();
+	void onEditMessage();
+	void onCopyPostLink();
+	void onFieldBarCancel();
 
 	void onCancelSendAction();
 
@@ -605,18 +626,15 @@ public slots:
 	void peerUpdated(PeerData *data);
 	void onFullPeerUpdated(PeerData *data);
 
-	void onPhotoUploaded(const FullMsgId &msgId, const MTPInputFile &file);
-	void onDocumentUploaded(const FullMsgId &msgId, const MTPInputFile &file);
-	void onThumbDocumentUploaded(const FullMsgId &msgId, const MTPInputFile &file, const MTPInputFile &thumb);
-	void onAudioUploaded(const FullMsgId &msgId, const MTPInputFile &file);
+	void onPhotoUploaded(const FullMsgId &msgId, bool silent, const MTPInputFile &file);
+	void onDocumentUploaded(const FullMsgId &msgId, bool silent, const MTPInputFile &file);
+	void onThumbDocumentUploaded(const FullMsgId &msgId, bool silent, const MTPInputFile &file, const MTPInputFile &thumb);
 
 	void onPhotoProgress(const FullMsgId &msgId);
 	void onDocumentProgress(const FullMsgId &msgId);
-	void onAudioProgress(const FullMsgId &msgId);
 
 	void onPhotoFailed(const FullMsgId &msgId);
 	void onDocumentFailed(const FullMsgId &msgId);
-	void onAudioFailed(const FullMsgId &msgId);
 
 	void onReportSpamClicked();
 	void onReportSpamSure();
@@ -632,7 +650,7 @@ public slots:
 	void onBotStart();
 	void onJoinChannel();
 	void onMuteUnmute();
-	void onBroadcastChange();
+	void onBroadcastSilentChange();
 
 	void onPhotoSelect();
 	void onDocumentSelect();
@@ -681,19 +699,24 @@ public slots:
 	void updateField();
 
 	void onRecordError();
-	void onRecordDone(QByteArray result, qint32 samples);
-	void onRecordUpdate(qint16 level, qint32 samples);
+	void onRecordDone(QByteArray result, VoiceWaveform waveform, qint32 samples);
+	void onRecordUpdate(quint16 level, qint32 samples);
 
 	void onUpdateHistoryItems();
 
 private:
 
 	MsgId _replyToId;
-	HistoryItem *_replyTo;
-	Text _replyToName, _replyToText;
+	Text _replyToName;
 	int32 _replyToNameVersion;
-	IconedButton _replyForwardPreviewCancel;
 	void updateReplyToName();
+
+	MsgId _editMsgId;
+
+	HistoryItem *_replyEditMsg;
+	Text _replyEditMsgText;
+
+	IconedButton _fieldBarCancel;
 
 	void sendExistingDocument(DocumentData *doc, const QString &caption);
 	void sendExistingPhoto(PhotoData *photo, const QString &caption);
@@ -701,6 +724,13 @@ private:
 	void drawField(Painter &p);
 	void drawRecordButton(Painter &p);
 	void drawRecording(Painter &p);
+
+	void updateMouseTracking();
+
+	mtpRequestId _saveEditMsgRequestId;
+	void saveEditMsg();
+	void saveEditMsgDone(History *history, const MTPUpdates &updates, mtpRequestId req);
+	bool saveEditMsgFail(History *history, const RPCError &error, mtpRequestId req);
 
 	DBIPeerReportSpamStatus _reportSpamStatus;
 	void updateReportSpamStatus();
@@ -747,7 +777,8 @@ private:
 	void savedGifsGot(const MTPmessages_SavedGifs &gifs);
 	bool savedGifsFailed(const RPCError &error);
 
-	void writeDraft(MsgId *replyTo = 0, const QString *text = 0, const MessageCursor *cursor = 0, bool *previewCancelled = 0);
+	void writeDrafts(HistoryDraft **msgDraft, HistoryEditDraft **editDraft);
+	void writeDrafts(History *history);
 	void setFieldText(const QString &text, int32 textUpdateEventsFlags = 0, bool clearUndoHistory = true);
 
 	QStringList getMediasFromMime(const QMimeData *d);
@@ -756,6 +787,7 @@ private:
 
 	bool readyToForward() const;
 	bool hasBroadcastToggle() const;
+	bool hasSilentToggle() const;
 
 	PeerData *_peer, *_clearPeer; // cache _peer in _clearPeer when showing clear history box
 	ChannelId _channel;
@@ -803,10 +835,11 @@ private:
 	EmojiButton _attachEmoji;
 	IconedButton _kbShow, _kbHide, _cmdStart;
 	FlatCheckbox _broadcast;
+	SilentToggle _silent;
 	bool _cmdStartShown;
 	MessageField _field;
 	Animation _a_record, _a_recording;
-	bool _recording, _inRecord, _inField, _inReply;
+	bool _recording, _inRecord, _inField, _inReplyEdit;
 	anim::ivalue a_recordingLevel;
 	int32 _recordingSamples;
 	anim::fvalue a_recordOver, a_recordDown;

@@ -1,5 +1,7 @@
 # [Telegram Desktop][telegram_desktop] – Official Messenger
 
+[![Join the chat at https://gitter.im/tdesktop/Lobby](https://badges.gitter.im/tdesktop/Lobby.svg)](https://gitter.im/tdesktop/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+
 This is the complete source code and the build instructions for the alpha version of the official desktop client for the [Telegram][telegram] messenger, based on the [Telegram API][telegram_api] and the [MTProto][telegram_proto] secure protocol.
 
 The source code is published under GPLv3 with OpenSSL exception, the license is available [here][license].

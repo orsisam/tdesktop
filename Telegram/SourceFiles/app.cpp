@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #include "stdafx.h"
 #include "lang.h"
@@ -25,8 +25,9 @@ Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
 #include "application.h"
 #include "fileuploader.h"
 #include "mainwidget.h"
+#if QT_VERSION < QT_VERSION_CHECK(5, 5, 0)
 #include <libexif/exif-data.h>
-
+#endif
 #include "localstorage.h"
 
 #include "numbers.h"
@@ -46,12 +47,10 @@ namespace {
 	UpdatedPeers updatedPeers;
 
 	PhotosData photosData;
-	VideosData videosData;
-	AudiosData audiosData;
 	DocumentsData documentsData;
 
-	typedef QHash<QString, ImageLinkData*> ImageLinksData;
-	ImageLinksData imageLinksData;
+	typedef QHash<LocationCoords, LocationData*> LocationsData;
+	LocationsData locationsData;
 
 	typedef QHash<WebPageId, WebPageData*> WebPagesData;
 	WebPagesData webPagesData;
@@ -63,8 +62,6 @@ namespace {
 	ChannelReplyMarkups channelReplyMarkups;
 
 	PhotoItems photoItems;
-	VideoItems videoItems;
-	AudioItems audioItems;
 	DocumentItems documentItems;
 	WebPageItems webPageItems;
 	SharedContactItems sharedContactItems;
@@ -151,12 +148,12 @@ namespace App {
 		return result;
 	}
 
-	Application *app() {
-		return Application::app();
+	AppClass *app() {
+		return AppClass::app();
 	}
 
 	Window *wnd() {
-		return Application::wnd();
+		return AppClass::wnd();
 	}
 
 	MainWidget *main() {
@@ -353,7 +350,7 @@ namespace App {
 		for (QVector<MTPUser>::const_iterator i = v.cbegin(), e = v.cend(); i != e; ++i) {
 			const MTPuser &user(*i);
             data = 0;
-			bool wasContact = false;
+			bool wasContact = false, minimal = false;
 			const MTPUserStatus *status = 0, emptyStatus = MTP_userStatusEmpty();
 
 			switch (user.type()) {
@@ -375,19 +372,22 @@ namespace App {
 			} break;
 			case mtpc_user: {
 				const MTPDuser &d(user.c_user());
+				minimal = d.is_min();
 
 				PeerId peer(peerFromUser(d.vid.v));
 				data = App::user(peer);
-				data->flags = d.vflags.v;
-				if (d.is_self()) {
-					data->input = MTP_inputPeerSelf();
-					data->inputUser = MTP_inputUserSelf();
-				} else if (!d.has_access_hash()) {
-					data->input = MTP_inputPeerUser(d.vid, MTP_long((data->access == UserNoAccess) ? 0 : data->access));
-					data->inputUser = MTP_inputUser(d.vid, MTP_long((data->access == UserNoAccess) ? 0 : data->access));
-				} else {
-					data->input = MTP_inputPeerUser(d.vid, d.vaccess_hash);
-					data->inputUser = MTP_inputUser(d.vid, d.vaccess_hash);
+				if (!minimal) {
+					data->flags = d.vflags.v;
+					if (d.is_self()) {
+						data->input = MTP_inputPeerSelf();
+						data->inputUser = MTP_inputUserSelf();
+					} else if (!d.has_access_hash()) {
+						data->input = MTP_inputPeerUser(d.vid, MTP_long((data->access == UserNoAccess) ? 0 : data->access));
+						data->inputUser = MTP_inputUser(d.vid, MTP_long((data->access == UserNoAccess) ? 0 : data->access));
+					} else {
+						data->input = MTP_inputPeerUser(d.vid, d.vaccess_hash);
+						data->inputUser = MTP_inputUser(d.vid, d.vaccess_hash);
+					}
 				}
 				if (d.is_deleted()) {
 					data->setPhone(QString());
@@ -396,10 +396,10 @@ namespace App {
 					data->access = UserNoAccess;
 					status = &emptyStatus;
 				} else {
-					QString phone = d.has_phone() ? qs(d.vphone) : QString();
+					QString phone = minimal ? data->phone : (d.has_phone() ? qs(d.vphone) : QString());
 					QString fname = d.has_first_name() ? textOneLine(qs(d.vfirst_name)) : QString();
 					QString lname = d.has_last_name() ? textOneLine(qs(d.vlast_name)) : QString();
-					QString uname = d.has_username() ? textOneLine(qs(d.vusername)) : QString();
+					QString uname = minimal ? data->username : (d.has_username() ? textOneLine(qs(d.vusername)) : QString());
 
 					bool phoneChanged = (data->phone != phone);
 					if (phoneChanged) data->setPhone(phone);
@@ -423,22 +423,24 @@ namespace App {
 					status = d.has_status() ? &d.vstatus : &emptyStatus;
 				}
 				wasContact = (data->contact > 0);
-				if (d.has_bot_info_version()) {
-					data->setBotInfoVersion(d.vbot_info_version.v);
-					data->botInfo->readsAllHistory = d.is_bot_chat_history();
-					data->botInfo->cantJoinGroups = d.is_bot_nochats();
-					data->botInfo->inlinePlaceholder = d.has_bot_inline_placeholder() ? '_' + qs(d.vbot_inline_placeholder) : QString();
-				} else {
-					data->setBotInfoVersion(-1);
-				}
-				data->contact = (d.is_contact() || d.is_mutual_contact()) ? 1 : (data->phone.isEmpty() ? -1 : 0);
-				if (data->contact == 1 && cReportSpamStatuses().value(data->id, dbiprsNoButton) != dbiprsNoButton) {
-					cRefReportSpamStatuses().insert(data->id, dbiprsNoButton);
-					Local::writeReportSpamStatuses();
-				}
-				if (d.is_self() && ::self != data) {
-					::self = data;
-					if (App::wnd()) App::wnd()->updateGlobalMenu();
+				if (!minimal) {
+					if (d.has_bot_info_version()) {
+						data->setBotInfoVersion(d.vbot_info_version.v);
+						data->botInfo->readsAllHistory = d.is_bot_chat_history();
+						data->botInfo->cantJoinGroups = d.is_bot_nochats();
+						data->botInfo->inlinePlaceholder = d.has_bot_inline_placeholder() ? '_' + qs(d.vbot_inline_placeholder) : QString();
+					} else {
+						data->setBotInfoVersion(-1);
+					}
+					data->contact = (d.is_contact() || d.is_mutual_contact()) ? 1 : (data->phone.isEmpty() ? -1 : 0);
+					if (data->contact == 1 && cReportSpamStatuses().value(data->id, dbiprsNoButton) != dbiprsNoButton) {
+						cRefReportSpamStatuses().insert(data->id, dbiprsNoButton);
+						Local::writeReportSpamStatuses();
+					}
+					if (d.is_self() && ::self != data) {
+						::self = data;
+						if (App::wnd()) App::wnd()->updateGlobalMenu();
+					}
 				}
 			} break;
 			}
@@ -446,7 +448,7 @@ namespace App {
             if (!data) continue;
 
 			data->loaded = true;
-			if (status) switch (status->type()) {
+			if (status && !minimal) switch (status->type()) {
 			case mtpc_userStatusEmpty: data->onlineTill = 0; break;
 			case mtpc_userStatusRecently:
 				if (data->onlineTill > -10) { // don't modify pseudo-online
@@ -520,7 +522,7 @@ namespace App {
 								if (!h->isEmpty()) {
 									h->clear(true);
 								}
-								if (!hto->dialogs.isEmpty() && !h->dialogs.isEmpty()) {
+								if (hto->inChatList() && h->inChatList()) {
 									App::removeDialog(h);
 								}
 							}
@@ -919,13 +921,33 @@ namespace App {
 		return false;
 	}
 
+	void updateEditedMessage(const MTPDmessage &m) {
+		PeerId peerId = peerFromMTP(m.vto_id);
+		if (m.has_from_id() && peerToUser(peerId) == MTP::authedId()) {
+			peerId = peerFromUser(m.vfrom_id);
+		}
+		if (HistoryItem *existing = App::histItemById(peerToChannel(peerId), m.vid.v)) {
+			existing->setText(qs(m.vmessage), m.has_entities() ? entitiesFromMTP(m.ventities.c_vector().v) : EntitiesInText());
+			existing->updateMedia(m.has_media() ? (&m.vmedia) : 0, true);
+			existing->setViewsCount(m.has_views() ? m.vviews.v : -1, false);
+			existing->initDimensions();
+			if (existing->history()->textCachedFor == existing) {
+				existing->history()->textCachedFor = 0;
+			}
+			if (App::main()) {
+				App::main()->dlgUpdated(existing->history(), existing->id);
+			}
+			Notify::historyItemResized(existing);
+		}
+	}
+
 	void addSavedGif(DocumentData *doc) {
 		SavedGifs &saved(cRefSavedGifs());
 		int32 index = saved.indexOf(doc);
 		if (index) {
 			if (index > 0) saved.remove(index);
 			saved.push_front(doc);
-			if (saved.size() > cSavedGifsLimit()) saved.pop_back();
+			if (saved.size() > Global::SavedGifsLimit()) saved.pop_back();
 			Local::writeSavedGifs();
 
 			if (App::main()) emit App::main()->savedGifsUpdated();
@@ -935,7 +957,7 @@ namespace App {
 	}
 
 	void checkSavedGif(HistoryItem *item) {
-		if (!item->toHistoryForwarded() && (item->out() || item->history()->peer == App::self())) {
+		if (!item->Is<HistoryMessageForwarded>() && (item->out() || item->history()->peer == App::self())) {
 			if (HistoryMedia *media = item->getMedia()) {
 				if (DocumentData *doc = media->getDocument()) {
 					if (doc->isGifv()) {
@@ -1288,26 +1310,6 @@ namespace App {
 		return App::photoSet(photo.vid.v, convert, 0, 0, ImagePtr(), ImagePtr(), ImagePtr());
 	}
 
-	VideoData *feedVideo(const MTPDvideo &video, VideoData *convert) {
-		return App::videoSet(video.vid.v, convert, video.vaccess_hash.v, video.vdate.v, video.vduration.v, video.vw.v, video.vh.v, App::image(video.vthumb), video.vdc_id.v, video.vsize.v);
-	}
-
-	AudioData *feedAudio(const MTPaudio &audio, AudioData *convert) {
-		switch (audio.type()) {
-		case mtpc_audio: {
-			return feedAudio(audio.c_audio(), convert);
-		} break;
-		case mtpc_audioEmpty: {
-			return App::audioSet(audio.c_audioEmpty().vid.v, convert, 0, 0, QString(), 0, 0, 0);
-		} break;
-		}
-		return App::audio(0);
-	}
-
-	AudioData *feedAudio(const MTPDaudio &audio, AudioData *convert) {
-		return App::audioSet(audio.vid.v, convert, audio.vaccess_hash.v, audio.vdate.v, qs(audio.vmime_type), audio.vduration.v, audio.vdc_id.v, audio.vsize.v);
-	}
-
 	DocumentData *feedDocument(const MTPdocument &document, const QPixmap &thumb) {
 		switch (document.type()) {
 		case mtpc_document: {
@@ -1433,7 +1435,7 @@ namespace App {
 		QString uname(username.trimmed());
 		for (PeersData::const_iterator i = peersData.cbegin(), e = peersData.cend(); i != e; ++i) {
 			if (!i.value()->userName().compare(uname, Qt::CaseInsensitive)) {
-				return i.value()->asUser();
+				return i.value();
 			}
 		}
 		return 0;
@@ -1513,110 +1515,6 @@ namespace App {
 		return result;
 	}
 
-	VideoData *video(const VideoId &video) {
-		VideosData::const_iterator i = ::videosData.constFind(video);
-		if (i == ::videosData.cend()) {
-			i = ::videosData.insert(video, new VideoData(video));
-		}
-		return i.value();
-	}
-
-	VideoData *videoSet(const VideoId &video, VideoData *convert, const uint64 &access, int32 date, int32 duration, int32 w, int32 h, const ImagePtr &thumb, int32 dc, int32 size) {
-		if (convert) {
-			if (convert->id != video) {
-				VideosData::iterator i = ::videosData.find(convert->id);
-				if (i != ::videosData.cend() && i.value() == convert) {
-					::videosData.erase(i);
-				}
-				convert->id = video;
-				convert->status = FileReady;
-			}
-			if (date) {
-				convert->access = access;
-				convert->date = date;
-				updateImage(convert->thumb, thumb);
-				convert->duration = duration;
-				convert->w = w;
-				convert->h = h;
-				convert->dc = dc;
-				convert->size = size;
-			}
-		}
-		VideosData::const_iterator i = ::videosData.constFind(video);
-		VideoData *result;
-		if (i == ::videosData.cend()) {
-			if (convert) {
-				result = convert;
-			} else {
-				result = new VideoData(video, access, date, duration, w, h, thumb, dc, size);
-			}
-			::videosData.insert(video, result);
-		} else {
-			result = i.value();
-			if (result != convert && date) {
-				result->access = access;
-				result->date = date;
-				result->duration = duration;
-				result->w = w;
-				result->h = h;
-				updateImage(result->thumb, thumb);
-				result->dc = dc;
-				result->size = size;
-			}
-		}
-		return result;
-	}
-
-	AudioData *audio(const AudioId &audio) {
-		AudiosData::const_iterator i = ::audiosData.constFind(audio);
-		if (i == ::audiosData.cend()) {
-			i = ::audiosData.insert(audio, new AudioData(audio));
-		}
-		return i.value();
-	}
-
-	AudioData *audioSet(const AudioId &audio, AudioData *convert, const uint64 &access, int32 date, const QString &mime, int32 duration, int32 dc, int32 size) {
-		if (convert) {
-			if (convert->id != audio) {
-				AudiosData::iterator i = ::audiosData.find(convert->id);
-				if (i != ::audiosData.cend() && i.value() == convert) {
-					::audiosData.erase(i);
-				}
-				convert->id = audio;
-				convert->status = FileReady;
-			}
-			if (date) {
-				convert->access = access;
-				convert->date = date;
-				convert->mime = mime;
-				convert->duration = duration;
-				convert->dc = dc;
-				convert->size = size;
-			}
-		}
-		AudiosData::const_iterator i = ::audiosData.constFind(audio);
-		AudioData *result;
-		if (i == ::audiosData.cend()) {
-			if (convert) {
-				result = convert;
-			} else {
-				result = new AudioData(audio, access, date, mime, duration, dc, size);
-			}
-			::audiosData.insert(audio, result);
-		} else {
-			result = i.value();
-			if (result != convert && date) {
-				result->access = access;
-				result->date = date;
-				result->mime = mime;
-				result->duration = duration;
-				result->dc = dc;
-				result->size = size;
-			}
-		}
-		return result;
-	}
-
 	DocumentData *document(const DocumentId &document) {
 		DocumentsData::const_iterator i = ::documentsData.constFind(document);
 		if (i == ::documentsData.cend()) {
@@ -1633,10 +1531,15 @@ namespace App {
 				if (i != ::documentsData.cend() && i.value() == convert) {
 					::documentsData.erase(i);
 				}
-				Local::copyStickerImage(mediaKey(DocumentFileLocation, convert->dc, convert->id), mediaKey(DocumentFileLocation, dc, document));
+
+				// inline bot sent gifs caching
+				if (!convert->voice() && !convert->isVideo()) {
+					Local::copyStickerImage(mediaKey(DocumentFileLocation, convert->dc, convert->id), mediaKey(DocumentFileLocation, dc, document));
+				}
+
 				convert->id = document;
 				convert->status = FileReady;
-				sentSticker = !!convert->sticker();
+				sentSticker = (convert->sticker() != 0);
 			}
 			if (date) {
 				convert->access = access;
@@ -1644,7 +1547,7 @@ namespace App {
 				convert->setattributes(attributes);
 				convert->mime = mime;
 				if (!thumb->isNull() && (convert->thumb->isNull() || convert->thumb->width() < thumb->width() || convert->thumb->height() < thumb->height())) {
-					convert->thumb = thumb;
+					updateImage(convert->thumb, thumb);
 				}
 				convert->dc = dc;
 				convert->size = size;
@@ -1660,7 +1563,7 @@ namespace App {
 
 			const FileLocation &loc(convert->location(true));
 			if (!loc.isEmpty()) {
-				Local::writeFileLocation(mediaKey(DocumentFileLocation, convert->dc, convert->id), loc);
+				Local::writeFileLocation(convert->mediaKey(), loc);
 			}
 		}
 		DocumentsData::const_iterator i = ::documentsData.constFind(document);
@@ -1671,7 +1574,9 @@ namespace App {
 			} else {
 				result = new DocumentData(document, access, date, attributes, mime, thumb, dc, size);
 				result->recountIsImage();
-				if (result->sticker()) result->sticker()->loc = thumbLocation;
+				if (result->sticker()) {
+					result->sticker()->loc = thumbLocation;
+				}
 			}
 			::documentsData.insert(document, result);
 		} else {
@@ -1692,7 +1597,9 @@ namespace App {
 				}
 			}
 		}
-		if (sentSticker && App::main()) App::main()->incrementSticker(result);
+		if (sentSticker && App::main()) {
+			App::main()->incrementSticker(result);
+		}
 		return result;
 	}
 
@@ -1764,25 +1671,12 @@ namespace App {
 		return result;
 	}
 
-	ImageLinkData *imageLink(const QString &imageLink) {
-		ImageLinksData::const_iterator i = imageLinksData.constFind(imageLink);
-		if (i == imageLinksData.cend()) {
-			i = imageLinksData.insert(imageLink, new ImageLinkData(imageLink));
+	LocationData *location(const LocationCoords &coords) {
+		LocationsData::const_iterator i = locationsData.constFind(coords);
+		if (i == locationsData.cend()) {
+			i = locationsData.insert(coords, new LocationData(coords));
 		}
 		return i.value();
-	}
-
-	ImageLinkData *imageLinkSet(const QString &imageLink, ImageLinkType type, const QString &url) {
-		ImageLinksData::const_iterator i = imageLinksData.constFind(imageLink);
-		ImageLinkData *result;
-		if (i == imageLinksData.cend()) {
-			result = new ImageLinkData(imageLink);
-			imageLinksData.insert(imageLink, result);
-			result->type = type;
-		} else {
-			result = i.value();
-		}
-		return result;
 	}
 
 	void forgetMedia() {
@@ -1791,16 +1685,10 @@ namespace App {
 		for (PhotosData::const_iterator i = ::photosData.cbegin(), e = ::photosData.cend(); i != e; ++i) {
 			i.value()->forget();
 		}
-		for (VideosData::const_iterator i = ::videosData.cbegin(), e = ::videosData.cend(); i != e; ++i) {
-			i.value()->forget();
-		}
-		for (AudiosData::const_iterator i = ::audiosData.cbegin(), e = ::audiosData.cend(); i != e; ++i) {
-			i.value()->forget();
-		}
 		for (DocumentsData::const_iterator i = ::documentsData.cbegin(), e = ::documentsData.cend(); i != e; ++i) {
 			i.value()->forget();
 		}
-		for (ImageLinksData::const_iterator i = imageLinksData.cbegin(), e = imageLinksData.cend(); i != e; ++i) {
+		for (LocationsData::const_iterator i = ::locationsData.cbegin(), e = ::locationsData.cend(); i != e; ++i) {
 			i.value()->thumb->forget();
 		}
 	}
@@ -1942,6 +1830,7 @@ namespace App {
 		updatedPeers.clear();
 		cSetSavedPeers(SavedPeers());
 		cSetSavedPeersByTime(SavedPeersByTime());
+		cSetRecentInlineBots(RecentInlineBots());
 		for (PeersData::const_iterator i = peersData.cbegin(), e = peersData.cend(); i != e; ++i) {
 			delete *i;
 		}
@@ -1950,14 +1839,6 @@ namespace App {
 			delete *i;
 		}
 		::photosData.clear();
-		for (VideosData::const_iterator i = ::videosData.cbegin(), e = ::videosData.cend(); i != e; ++i) {
-			delete *i;
-		}
-		::videosData.clear();
-		for (AudiosData::const_iterator i = ::audiosData.cbegin(), e = ::audiosData.cend(); i != e; ++i) {
-			delete *i;
-		}
-		::audiosData.clear();
 		for (DocumentsData::const_iterator i = ::documentsData.cbegin(), e = ::documentsData.cend(); i != e; ++i) {
 			delete *i;
 		}
@@ -1974,9 +1855,10 @@ namespace App {
 		cSetSavedGifs(SavedGifs());
 		cSetLastSavedGifsUpdate(0);
 		cSetReportSpamStatuses(ReportSpamStatuses());
+		cSetAutoDownloadPhoto(0);
+		cSetAutoDownloadAudio(0);
+		cSetAutoDownloadGif(0);
 		::photoItems.clear();
-		::videoItems.clear();
-		::audioItems.clear();
 		::documentItems.clear();
 		::webPageItems.clear();
 		::sharedContactItems.clear();
@@ -2279,9 +2161,7 @@ namespace App {
 		if (wnd()) {
 			wnd()->quit();
 		}
-		if (app()) {
-			app()->quit();
-		}
+		Application::quit();
 	}
 
 	bool quiting() {
@@ -2377,38 +2257,6 @@ namespace App {
 		return ::photosData;
 	}
 
-	void regVideoItem(VideoData *data, HistoryItem *item) {
-		::videoItems[data].insert(item, NullType());
-	}
-
-	void unregVideoItem(VideoData *data, HistoryItem *item) {
-		::videoItems[data].remove(item);
-	}
-
-	const VideoItems &videoItems() {
-		return ::videoItems;
-	}
-
-	const VideosData &videosData() {
-		return ::videosData;
-	}
-
-	void regAudioItem(AudioData *data, HistoryItem *item) {
-		::audioItems[data].insert(item, NullType());
-	}
-
-	void unregAudioItem(AudioData*data, HistoryItem *item) {
-		::audioItems[data].remove(item);
-	}
-
-	const AudioItems &audioItems() {
-		return ::audioItems;
-	}
-
-	const AudiosData &audiosData() {
-		return ::audiosData;
-	}
-
 	void regDocumentItem(DocumentData *data, HistoryItem *item) {
 		::documentItems[data].insert(item, NullType());
 	}
@@ -2470,7 +2318,7 @@ namespace App {
 
 	QString phoneFromSharedContact(int32 userId) {
 		SharedContactItems::const_iterator i = ::sharedContactItems.constFind(userId);
-		if (i != ::sharedContactItems.cend()) {
+		if (i != ::sharedContactItems.cend() && !i->isEmpty()) {
 			HistoryMedia *media = i->cbegin().key()->getMedia();
 			if (media && media->type() == MediaTypeContact) {
 				return static_cast<HistoryContact*>(media)->phone();
@@ -2612,9 +2460,14 @@ namespace App {
 	}
 
 	QNetworkProxy getHttpProxySettings() {
-		if (cConnectionType() == dbictHttpProxy) {
-			const ConnectionProxy &p(cConnectionProxy());
-			return QNetworkProxy(QNetworkProxy::HttpProxy, p.host, p.port, p.user, p.password);
+		const ConnectionProxy *proxy = 0;
+		if (Global::started()) {
+			proxy = (cConnectionType() == dbictHttpProxy) ? (&cConnectionProxy()) : 0;
+		} else {
+			proxy = Sandbox::PreLaunchProxy().host.isEmpty() ? 0 : (&Sandbox::PreLaunchProxy());
+		}
+		if (proxy) {
+			return QNetworkProxy(QNetworkProxy::HttpProxy, proxy->host, proxy->port, proxy->user, proxy->password);
 		}
 		return QNetworkProxy(QNetworkProxy::DefaultProxy);
 	}

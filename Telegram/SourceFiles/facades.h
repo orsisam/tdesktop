@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
@@ -27,7 +27,7 @@ namespace App {
 	void sendBotCommand(const QString &cmd, MsgId replyTo = 0);
 	bool insertBotCommand(const QString &cmd, bool specialGif = false);
 	void searchByHashtag(const QString &tag, PeerData *inPeer);
-	void openPeerByName(const QString &username, bool toProfile = false, const QString &startToken = QString());
+	void openPeerByName(const QString &username, MsgId msgId = ShowAtUnreadMsgId, const QString &startToken = QString());
 	void joinGroupByHash(const QString &hash);
 	void stickersBox(const QString &name);
 	void openLocalUrl(const QString &url);
@@ -35,9 +35,11 @@ namespace App {
 	void removeDialog(History *history);
 	void showSettings();
 
+	void activateTextLink(TextLinkPtr link, Qt::MouseButton button);
+
 };
 
-namespace Ui { // openssl doesn't allow me to use UI :(
+namespace Ui {
 
 	void showStickerPreview(DocumentData *sticker);
 	void hideStickerPreview();
@@ -66,6 +68,8 @@ namespace Ui { // openssl doesn't allow me to use UI :(
 	inline void showChatsList() {
 		showPeerHistory(PeerId(0), 0);
 	}
+
+	bool hideWindowNoQuit();
 
 };
 
@@ -96,19 +100,75 @@ namespace Notify {
 
 };
 
+#define DeclareReadOnlyVar(Type, Name) const Type &Name();
+#define DeclareRefVar(Type, Name) DeclareReadOnlyVar(Type, Name) \
+	Type &Ref##Name();
+#define DeclareVar(Type, Name) DeclareRefVar(Type, Name) \
+	void Set##Name(const Type &Name);
+
+namespace Sandbox {
+
+	bool CheckBetaVersionDir();
+	void WorkingDirReady();
+
+	void start();
+	void finish();
+
+	uint64 UserTag();
+
+	DeclareReadOnlyVar(QString, LangSystemISO);
+	DeclareReadOnlyVar(int32, LangSystem);
+	DeclareVar(QByteArray, LastCrashDump);
+	DeclareVar(ConnectionProxy, PreLaunchProxy);
+
+}
+
+namespace Adaptive {
+	enum Layout {
+		OneColumnLayout,
+		NormalLayout,
+		WideLayout,
+	};
+};
+
 namespace Global {
 
-	class Initializer {
-	public:
-		Initializer();
-		~Initializer();
-	};
+	bool started();
+	void start();
+	void finish();
 
-#define DeclareGlobalReadOnly(Type, Name) const Type &Name();
-#define DeclareGlobal(Type, Name) DeclareGlobalReadOnly(Type, Name) \
-	void Set##Name(const Type &Name); \
-	Type &Ref##Name();
+	DeclareReadOnlyVar(uint64, LaunchId);
 
-	DeclareGlobalReadOnly(uint64, LaunchId);
+	DeclareVar(Adaptive::Layout, AdaptiveLayout);
+	DeclareVar(bool, AdaptiveForWide);
+
+	// config
+	DeclareVar(int32, ChatSizeMax);
+	DeclareVar(int32, MegagroupSizeMax);
+	DeclareVar(int32, ForwardedCountMax);
+	DeclareVar(int32, OnlineUpdatePeriod);
+	DeclareVar(int32, OfflineBlurTimeout);
+	DeclareVar(int32, OfflineIdleTimeout);
+	DeclareVar(int32, OnlineFocusTimeout); // not from config
+	DeclareVar(int32, OnlineCloudTimeout);
+	DeclareVar(int32, NotifyCloudDelay);
+	DeclareVar(int32, NotifyDefaultDelay);
+	DeclareVar(int32, ChatBigSize);
+	DeclareVar(int32, PushChatPeriod);
+	DeclareVar(int32, PushChatLimit);
+	DeclareVar(int32, SavedGifsLimit);
+	DeclareVar(int32, EditTimeLimit);
 
 };
+
+namespace Adaptive {
+	inline bool OneColumn() {
+		return Global::AdaptiveLayout() == OneColumnLayout;
+	}
+	inline bool Normal() {
+		return Global::AdaptiveLayout() == NormalLayout;
+	}
+	inline bool Wide() {
+		return Global::AdaptiveForWide() && (Global::AdaptiveLayout() == WideLayout);
+	}
+}

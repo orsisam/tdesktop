@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
@@ -40,7 +40,7 @@ public:
 	typedef QHash<PeerId, History*> Map;
 	Map map;
 
-	Histories() : _a_typings(animation(this, &Histories::step_typings)), unreadFull(0), unreadMuted(0) {
+	Histories() : _a_typings(animation(this, &Histories::step_typings)), _unreadFull(0), _unreadMuted(0) {
 	}
 
 	void regSendAction(History *history, UserData *user, const MTPSendMessageAction &action);
@@ -52,7 +52,7 @@ public:
 	void clear();
 	void remove(const PeerId &peer);
 	~Histories() {
-		unreadFull = unreadMuted = 0;
+		_unreadFull = _unreadMuted = 0;
 	}
 
 	HistoryItem *addNewMessage(const MTPMessage &msg, NewMessageType type);
@@ -62,7 +62,29 @@ public:
 	TypingHistories typing;
 	Animation _a_typings;
 
-	int32 unreadFull, unreadMuted;
+	int32 unreadBadge() const {
+		return _unreadFull - (cIncludeMuted() ? 0 : _unreadMuted);
+	}
+	bool unreadOnlyMuted() const {
+		return cIncludeMuted() ? (_unreadMuted >= _unreadFull) : false;
+	}
+	void unreadIncrement(int32 count, bool muted) {
+		_unreadFull += count;
+		if (muted) {
+			_unreadMuted += count;
+		}
+	}
+	void unreadMuteChanged(int32 count, bool muted) {
+		if (muted) {
+			_unreadMuted += count;
+		} else {
+			_unreadMuted -= count;
+		}
+	}
+
+private:
+	int32 _unreadFull, _unreadMuted;
+
 };
 
 class HistoryBlock;
@@ -95,23 +117,24 @@ enum HistoryMediaType {
 	MediaTypeVideo,
 	MediaTypeGeo,
 	MediaTypeContact,
-	MediaTypeAudio,
-	MediaTypeDocument,
+	MediaTypeFile,
 	MediaTypeGif,
 	MediaTypeSticker,
-	MediaTypeImageLink,
+	MediaTypeLocation,
 	MediaTypeWebPage,
+	MediaTypeMusicFile,
+	MediaTypeVoiceFile,
 
 	MediaTypeCount
 };
 
 enum MediaOverviewType {
-	OverviewPhotos,
-	OverviewVideos,
-	OverviewAudioDocuments,
-	OverviewDocuments,
-	OverviewAudios,
-	OverviewLinks,
+	OverviewPhotos     = 0,
+	OverviewVideos     = 1,
+	OverviewMusicFiles = 2,
+	OverviewFiles      = 3,
+	OverviewVoiceFiles = 4,
+	OverviewLinks      = 5,
 
 	OverviewCount
 };
@@ -120,9 +143,9 @@ inline MTPMessagesFilter typeToMediaFilter(MediaOverviewType &type) {
 	switch (type) {
 	case OverviewPhotos: return MTP_inputMessagesFilterPhotos();
 	case OverviewVideos: return MTP_inputMessagesFilterVideo();
-	case OverviewAudioDocuments: return MTP_inputMessagesFilterAudioDocuments();
-	case OverviewDocuments: return MTP_inputMessagesFilterDocument();
-	case OverviewAudios: return MTP_inputMessagesFilterAudio();
+	case OverviewMusicFiles: return MTP_inputMessagesFilterMusic();
+	case OverviewFiles: return MTP_inputMessagesFilterDocument();
+	case OverviewVoiceFiles: return MTP_inputMessagesFilterVoice();
 	case OverviewLinks: return MTP_inputMessagesFilterUrl();
 	default: type = OverviewCount; break;
 	}
@@ -133,8 +156,8 @@ enum SendActionType {
 	SendActionTyping,
 	SendActionRecordVideo,
 	SendActionUploadVideo,
-	SendActionRecordAudio,
-	SendActionUploadAudio,
+	SendActionRecordVoice,
+	SendActionUploadVoice,
 	SendActionUploadPhoto,
 	SendActionUploadFile,
 	SendActionChooseLocation,
@@ -148,6 +171,42 @@ struct SendAction {
 	int32 progress;
 };
 
+struct HistoryDraft {
+	HistoryDraft() : msgId(0), previewCancelled(false) {
+	}
+	HistoryDraft(const QString &text, MsgId msgId, const MessageCursor &cursor, bool previewCancelled)
+		: text(text)
+		, msgId(msgId)
+		, cursor(cursor)
+		, previewCancelled(previewCancelled) {
+	}
+	HistoryDraft(const FlatTextarea &field, MsgId msgId, bool previewCancelled)
+		: text(field.getLastText())
+		, msgId(msgId)
+		, cursor(field)
+		, previewCancelled(previewCancelled) {
+	}
+	QString text;
+	MsgId msgId; // replyToId for message draft, editMsgId for edit draft
+	MessageCursor cursor;
+	bool previewCancelled;
+};
+struct HistoryEditDraft : public HistoryDraft {
+	HistoryEditDraft()
+		: HistoryDraft()
+		, saveRequest(0) {
+	}
+	HistoryEditDraft(const QString &text, MsgId msgId, const MessageCursor &cursor, bool previewCancelled, mtpRequestId saveRequest = 0)
+		: HistoryDraft(text, msgId, cursor, previewCancelled)
+		, saveRequest(saveRequest) {
+	}
+	HistoryEditDraft(const FlatTextarea &field, MsgId msgId, bool previewCancelled, mtpRequestId saveRequest = 0)
+		: HistoryDraft(field, msgId, previewCancelled)
+		, saveRequest(saveRequest) {
+	}
+	mtpRequestId saveRequest;
+};
+
 class HistoryMedia;
 class HistoryMessage;
 class HistoryUnreadBar;
@@ -158,6 +217,7 @@ enum AddToOverviewMethod {
 	AddToOverviewBack, // when new messages slice was received and it is the last one, we index all media
 };
 
+struct DialogsIndexed;
 class ChannelHistory;
 class History {
 public:
@@ -183,19 +243,17 @@ public:
 	void blockResized(HistoryBlock *block, int32 dh);
 	void removeBlock(HistoryBlock *block);
 
-	virtual ~History() {
-		clear();
-	}
+	virtual ~History();
 
 	HistoryItem *createItem(HistoryBlock *block, const MTPMessage &msg, bool applyServiceAction);
-	HistoryItem *createItemForwarded(HistoryBlock *block, MsgId id, QDateTime date, int32 from, HistoryMessage *msg);
+	HistoryItem *createItemForwarded(HistoryBlock *block, MsgId id, int32 flags, QDateTime date, int32 from, HistoryMessage *msg);
 	HistoryItem *createItemDocument(HistoryBlock *block, MsgId id, int32 flags, int32 viaBotId, MsgId replyTo, QDateTime date, int32 from, DocumentData *doc, const QString &caption);
 	HistoryItem *createItemPhoto(HistoryBlock *block, MsgId id, int32 flags, int32 viaBotId, MsgId replyTo, QDateTime date, int32 from, PhotoData *photo, const QString &caption);
 
 	HistoryItem *addNewService(MsgId msgId, QDateTime date, const QString &text, int32 flags = 0, HistoryMedia *media = 0, bool newMsg = true);
 	HistoryItem *addNewMessage(const MTPMessage &msg, NewMessageType type);
 	HistoryItem *addToHistory(const MTPMessage &msg);
-	HistoryItem *addNewForwarded(MsgId id, QDateTime date, int32 from, HistoryMessage *item);
+	HistoryItem *addNewForwarded(MsgId id, int32 flags, QDateTime date, int32 from, HistoryMessage *item);
 	HistoryItem *addNewDocument(MsgId id, int32 flags, int32 viaBotId, MsgId replyTo, QDateTime date, int32 from, DocumentData *doc, const QString &caption);
 	HistoryItem *addNewPhoto(MsgId id, int32 flags, int32 viaBotId, MsgId replyTo, QDateTime date, int32 from, PhotoData *photo, const QString &caption);
 
@@ -229,8 +287,26 @@ public:
 	void getReadyFor(MsgId msgId, MsgId &fixInScrollMsgId, int32 &fixInScrollMsgTop);
 
 	void setLastMessage(HistoryItem *msg);
-	void setPosInDialogsDate(const QDateTime &date);
 	void fixLastMessage(bool wasAtBottom);
+
+	typedef QMap<QChar, DialogRow*> ChatListLinksMap;
+	void setChatsListDate(const QDateTime &date);
+	QPair<int32, int32> adjustByPosInChatsList(DialogsIndexed &indexed);
+	uint64 sortKeyInChatList() const {
+		return _sortKeyInChatList;
+	}
+	bool inChatList() const {
+		return !_chatListLinks.isEmpty();
+	}
+	int32 posInChatList() const {
+		t_assert(inChatList());
+		return _chatListLinks[0]->pos;
+	}
+	DialogRow *addToChatList(DialogsIndexed &indexed);
+	void removeFromChatList(DialogsIndexed &indexed);
+	void removeChatListEntryByLetter(QChar letter);
+	void addChatListEntryByLetter(QChar letter, DialogRow *row);
+	void updateChatListEntry() const;
 
 	MsgId minMsgId() const;
 	MsgId maxMsgId() const;
@@ -283,10 +359,20 @@ public:
 	typedef QList<HistoryItem*> NotifyQueue;
 	NotifyQueue notifies;
 
-	QString draft;
-	MsgId draftToId;
-	MessageCursor draftCursor;
-	bool draftPreviewCancelled;
+	HistoryDraft *msgDraft;
+	HistoryEditDraft *editDraft;
+	HistoryDraft *draft() {
+		return editDraft ? editDraft : msgDraft;
+	}
+	void setMsgDraft(HistoryDraft *draft) {
+		if (msgDraft) delete msgDraft;
+		msgDraft = draft;
+	}
+	void setEditDraft(HistoryEditDraft *draft) {
+		if (editDraft) delete editDraft;
+		editDraft = draft;
+	}
+
 	int32 lastWidth, lastScrollTop;
 	MsgId lastShowAtMsgId;
 	bool mute;
@@ -299,10 +385,6 @@ public:
 
 	mutable const HistoryItem *textCachedFor; // cache
 	mutable Text lastItemTextCache;
-
-	typedef QMap<QChar, DialogRow*> DialogLinks;
-	DialogLinks dialogs;
-	uint64 posInDialogs; // like ((unixtime) << 32) | (incremented counter)
 
 	typedef QMap<UserData*, uint64> TypingUsers;
 	TypingUsers typing;
@@ -349,6 +431,9 @@ public:
 	void changeMsgId(MsgId oldId, MsgId newId);
 
 private:
+
+	ChatListLinksMap _chatListLinks;
+	uint64 _sortKeyInChatList; // like ((unixtime) << 32) | (incremented counter)
 
 	typedef QMap<MsgId, NullType> MediaOverviewIds;
 	MediaOverviewIds overviewIds[OverviewCount];
@@ -587,15 +672,15 @@ struct DialogsList {
 		if (sortMode != DialogsSortByDate) return;
 
 		DialogRow *change = row;
-		if (change != begin && begin->history->posInDialogs < row->history->posInDialogs) {
+		if (change != begin && begin->history->sortKeyInChatList() < row->history->sortKeyInChatList()) {
 			change = begin;
-		} else while (change->prev && change->prev->history->posInDialogs < row->history->posInDialogs) {
+		} else while (change->prev && change->prev->history->sortKeyInChatList() < row->history->sortKeyInChatList()) {
 			change = change->prev;
 		}
 		if (!insertBefore(row, change)) {
-			if (change->next != end && end->prev->history->posInDialogs > row->history->posInDialogs) {
+			if (change->next != end && end->prev->history->sortKeyInChatList() > row->history->sortKeyInChatList()) {
 				change = end->prev;
-			} else while (change->next != end && change->next->history->posInDialogs > row->history->posInDialogs) {
+			} else while (change->next != end && change->next->history->sortKeyInChatList() > row->history->sortKeyInChatList()) {
 				change = change->next;
 			}
 			insertAfter(row, change);
@@ -643,22 +728,19 @@ struct DialogsIndexed {
 	DialogsIndexed(DialogsSortMode sortMode) : sortMode(sortMode), list(sortMode) {
 	}
 
-	History::DialogLinks addToEnd(History *history) {
-		History::DialogLinks result;
+	History::ChatListLinksMap addToEnd(History *history) {
+		History::ChatListLinksMap result;
 		DialogsList::RowByPeer::const_iterator i = list.rowByPeer.find(history->peer->id);
-		if (i != list.rowByPeer.cend()) {
-			return i.value()->history->dialogs;
-		}
-
-		result.insert(0, list.addToEnd(history));
-		for (PeerData::NameFirstChars::const_iterator i = history->peer->chars.cbegin(), e = history->peer->chars.cend(); i != e; ++i) {
-			DialogsIndex::iterator j = index.find(*i);
-			if (j == index.cend()) {
-				j = index.insert(*i, new DialogsList(sortMode));
+		if (i == list.rowByPeer.cend()) {
+			result.insert(0, list.addToEnd(history));
+			for (PeerData::NameFirstChars::const_iterator i = history->peer->chars.cbegin(), e = history->peer->chars.cend(); i != e; ++i) {
+				DialogsIndex::iterator j = index.find(*i);
+				if (j == index.cend()) {
+					j = index.insert(*i, new DialogsList(sortMode));
+				}
+				result.insert(*i, j.value()->addToEnd(history));
 			}
-			result.insert(*i, j.value()->addToEnd(history));
 		}
-
 		return result;
 	}
 
@@ -679,8 +761,8 @@ struct DialogsIndexed {
 		return res;
 	}
 
-	void adjustByPos(const History::DialogLinks &links) {
-		for (History::DialogLinks::const_iterator i = links.cbegin(), e = links.cend(); i != e; ++i) {
+	void adjustByPos(const History::ChatListLinksMap &links) {
+		for (History::ChatListLinksMap::const_iterator i = links.cbegin(), e = links.cend(); i != e; ++i) {
 			if (i.key() == QChar(0)) {
 				list.adjustByPos(i.value());
 			} else {
@@ -764,12 +846,12 @@ protected:
 
 class HistoryReply; // dynamic_cast optimize
 class HistoryMessage; // dynamic_cast optimize
-class HistoryForwarded; // dynamic_cast optimize
 
 enum HistoryCursorState {
 	HistoryDefaultCursorState,
 	HistoryInTextCursorState,
-	HistoryInDateCursorState
+	HistoryInDateCursorState,
+	HistoryInForwardedCursorState,
 };
 
 enum InfoDisplayType {
@@ -778,7 +860,7 @@ enum InfoDisplayType {
 };
 
 inline bool isImportantChannelMessage(MsgId id, int32 flags) { // client-side important msgs always has_views or has_from_id
-	return (flags & MTPDmessage::flag_out) || (flags & MTPDmessage::flag_mentioned) || ((id > 0 || flags != 0) && !(flags & MTPDmessage::flag_from_id));
+	return (flags & MTPDmessage::flag_out) || (flags & MTPDmessage::flag_mentioned) || (flags & MTPDmessage::flag_post);
 }
 
 enum HistoryItemType {
@@ -790,8 +872,45 @@ enum HistoryItemType {
 	HistoryItemJoined
 };
 
+struct HistoryMessageVia : public BasicInterface<HistoryMessageVia> {
+	HistoryMessageVia(Interfaces *);
+	void create(int32 userId);
+	void resize(int32 availw) const;
+
+	UserData *_bot;
+	mutable QString _text;
+	mutable int32 _width, _maxWidth;
+	TextLinkPtr _lnk;
+};
+
+struct HistoryMessageViews : public BasicInterface<HistoryMessageViews> {
+	HistoryMessageViews(Interfaces *);
+
+	QString _viewsText;
+	int32 _views, _viewsWidth;
+};
+
+struct HistoryMessageSigned : public BasicInterface<HistoryMessageSigned> {
+	HistoryMessageSigned(Interfaces *);
+
+	void create(UserData *from, const QDateTime &date);
+	int32 maxWidth() const;
+
+	Text _signature;
+};
+
+struct HistoryMessageForwarded : public BasicInterface<HistoryMessageForwarded> {
+	HistoryMessageForwarded(Interfaces *);
+	void create(const HistoryMessageVia *via) const;
+	bool display(bool hasVia) const;
+
+	PeerData *_authorOriginal, *_fromOriginal;
+	MsgId _originalId;
+	mutable Text _text;
+};
+
 class HistoryMedia;
-class HistoryItem : public HistoryElem {
+class HistoryItem : public HistoryElem, public Interfaces {
 public:
 
 	HistoryItem(History *history, HistoryBlock *block, MsgId msgId, int32 flags, QDateTime msgDate, int32 from);
@@ -859,14 +978,20 @@ public:
 	bool hasViews() const {
 		return _flags & MTPDmessage::flag_views;
 	}
-	bool fromChannel() const {
-		return _from->isChannel();
+	bool isPost() const {
+		return _flags & MTPDmessage::flag_post;
 	}
 	bool isImportant() const {
 		return _history->isChannel() && isImportantChannelMessage(id, _flags);
 	}
 	bool indexInOverview() const {
-		return (id > 0) && (!history()->isChannel() || history()->isMegagroup() || fromChannel());
+		return (id > 0) && (!history()->isChannel() || history()->isMegagroup() || isPost());
+	}
+	bool isSilent() const {
+		return _flags & MTPDmessage::flag_silent;
+	}
+	virtual int32 viewsCount() const {
+		return hasViews() ? 1 : -1;
 	}
 
 	virtual bool needCheck() const {
@@ -897,7 +1022,7 @@ public:
 	virtual bool serviceMsg() const {
 		return false;
 	}
-	virtual void updateMedia(const MTPMessageMedia *media) {
+	virtual void updateMedia(const MTPMessageMedia *media, bool edited = false) {
 	}
 	virtual int32 addToOverview(AddToOverviewMethod method) {
 		return 0;
@@ -936,11 +1061,19 @@ public:
 
 		if (id == 1) return false;
 		if (channel->amCreator()) return true;
-		if (fromChannel()) {
+		if (isPost()) {
 			if (channel->amEditor() && out()) return true;
 			return false;
 		}
 		return (channel->amEditor() || channel->amModerator() || out());
+	}
+
+	bool canEdit(const QDateTime &cur) const;
+	bool hasDirectLink() const {
+		return id > 0 && _history->peer->isChannel() && _history->peer->asChannel()->isPublic();
+	}
+	QString directLink() const {
+		return hasDirectLink() ? qsl("https://telegram.me/") + _history->peer->asChannel()->username + '/' + QString::number(id) : QString();
 	}
 
 	int32 y;
@@ -978,12 +1111,6 @@ public:
 	virtual int32 timeWidth() const {
 		return 0;
 	}
-	virtual QString viewsText() const {
-		return QString();
-	}
-	virtual int32 viewsWidth() const {
-		return 0;
-	}
 	virtual bool pointInTime(int32 right, int32 bottom, int32 x, int32 y, InfoDisplayType type) const {
 		return false;
 	}
@@ -1004,12 +1131,6 @@ public:
 	virtual const HistoryMessage *toHistoryMessage() const { // dynamic_cast optimize
 		return 0;
 	}
-	virtual HistoryForwarded *toHistoryForwarded() { // dynamic_cast optimize
-		return 0;
-	}
-	virtual const HistoryForwarded *toHistoryForwarded() const { // dynamic_cast optimize
-		return 0;
-	}
 	virtual HistoryReply *toHistoryReply() { // dynamic_cast optimize
 		return 0;
 	}
@@ -1018,10 +1139,24 @@ public:
 	}
 
 	bool hasFromName() const {
-		return (!out() || fromChannel()) && !history()->peer->isUser();
+		return (!out() || isPost()) && !history()->peer->isUser();
 	}
-	bool displayFromPhoto() const {
-		return !out() && !history()->peer->isUser() && !fromChannel();
+	PeerData *author() const {
+		return isPost() ? history()->peer : _from;
+	}
+	bool displayFromPhoto() const;
+
+	PeerData *fromOriginal() const {
+		if (const HistoryMessageForwarded *fwd = Get<HistoryMessageForwarded>()) {
+			return fwd->_fromOriginal;
+		}
+		return from();
+	}
+	PeerData *authorOriginal() const {
+		if (const HistoryMessageForwarded *fwd = Get<HistoryMessageForwarded>()) {
+			return fwd->_authorOriginal;
+		}
+		return author();
 	}
 
 	void clipCallback(ClipReaderNotification notification);
@@ -1030,11 +1165,15 @@ public:
 
 protected:
 
+	HistoryItem(const HistoryItem &);
+	HistoryItem &operator=(const HistoryItem &);
+
 	PeerData *_from;
-	mutable int32 _fromVersion;
 	History *_history;
 	HistoryBlock *_block;
 	int32 _flags;
+
+	mutable int32 _authorNameVersion;
 
 };
 
@@ -1207,10 +1346,11 @@ inline MediaOverviewType mediaToOverviewType(HistoryMedia *media) {
 	switch (media->type()) {
 	case MediaTypePhoto: return OverviewPhotos;
 	case MediaTypeVideo: return OverviewVideos;
-	case MediaTypeDocument: return media->getDocument()->song() ? OverviewAudioDocuments : OverviewDocuments;
-	case MediaTypeGif: return media->getDocument()->isGifv() ? OverviewCount : OverviewDocuments;
-//	case MediaTypeSticker: return OverviewDocuments;
-	case MediaTypeAudio: return OverviewAudios;
+	case MediaTypeFile: return OverviewFiles;
+	case MediaTypeMusicFile: return media->getDocument()->isMusic() ? OverviewMusicFiles : OverviewFiles;
+	case MediaTypeVoiceFile: return OverviewVoiceFiles;
+	case MediaTypeGif: return media->getDocument()->isGifv() ? OverviewCount : OverviewFiles;
+//	case MediaTypeSticker: return OverviewFiles;
 	}
 	return OverviewCount;
 }
@@ -1323,7 +1463,7 @@ public:
 		return _caption.original();
 	}
 	bool needsBubble(const HistoryItem *parent) const {
-		return !_caption.isEmpty() || parent->toHistoryForwarded() || parent->toHistoryReply() || parent->viaBot();
+		return !_caption.isEmpty() || parent->Is<HistoryMessageForwarded>() || parent->toHistoryReply() || parent->viaBot();
 	}
 	bool customInfoLayout() const {
 		return _caption.isEmpty();
@@ -1354,7 +1494,7 @@ private:
 class HistoryVideo : public HistoryFileMedia {
 public:
 
-	HistoryVideo(const MTPDvideo &video, const QString &caption, HistoryItem *parent);
+	HistoryVideo(DocumentData *document, const QString &caption, HistoryItem *parent);
 	HistoryVideo(const HistoryVideo &other);
 	HistoryMediaType type() const {
 		return MediaTypeVideo;
@@ -1372,7 +1512,7 @@ public:
 	const QString inDialogsText() const;
 	const QString inHistoryText() const;
 
-	VideoData *video() const {
+	DocumentData *getDocument() {
 		return _data;
 	}
 
@@ -1389,7 +1529,7 @@ public:
 	ImagePtr replyPreview();
 
 	bool needsBubble(const HistoryItem *parent) const {
-		return !_caption.isEmpty() || parent->toHistoryForwarded() || parent->toHistoryReply() || parent->viaBot();
+		return !_caption.isEmpty() || parent->Is<HistoryMessageForwarded>() || parent->toHistoryReply() || parent->viaBot();
 	}
 	bool customInfoLayout() const {
 		return _caption.isEmpty();
@@ -1411,8 +1551,8 @@ protected:
 	}
 
 private:
-	VideoData *_data;
-	int16 _thumbw;
+	DocumentData *_data;
+	int32 _thumbw;
 	Text _caption;
 
 	void setStatusSize(int32 newSize) const;
@@ -1420,76 +1560,52 @@ private:
 
 };
 
-class HistoryAudio : public HistoryFileMedia {
-public:
-
-	HistoryAudio(const MTPDaudio &audio);
-	HistoryAudio(const HistoryAudio &other);
-	HistoryMediaType type() const {
-		return MediaTypeAudio;
+struct HistoryDocumentThumbed : public BasicInterface<HistoryDocumentThumbed> {
+	HistoryDocumentThumbed(Interfaces *interfaces) : _thumbw(0), _linkw(0) {
 	}
-	HistoryMedia *clone() const {
-		return new HistoryAudio(*this);
+	TextLinkPtr _linksavel, _linkcancell;
+	int32 _thumbw;
+
+	mutable int32 _linkw;
+	mutable QString _link;
+};
+struct HistoryDocumentCaptioned : public BasicInterface<HistoryDocumentCaptioned> {
+	HistoryDocumentCaptioned(Interfaces *interfaces) : _caption(st::msgFileMinWidth - st::msgPadding.left() - st::msgPadding.right()) {
 	}
-
-	void initDimensions(const HistoryItem *parent);
-
-	void draw(Painter &p, const HistoryItem *parent, const QRect &r, bool selected, uint64 ms) const;
-	void getState(TextLinkPtr &lnk, HistoryCursorState &state, int32 x, int32 y, const HistoryItem *parent) const;
-
-	const QString inDialogsText() const;
-	const QString inHistoryText() const;
-
-	bool uploading() const {
-		return _data->uploading();
+	Text _caption;
+};
+struct HistoryDocumentNamed : public BasicInterface<HistoryDocumentNamed> {
+	HistoryDocumentNamed(Interfaces *interfaces) : _namew(0) {
 	}
+	QString _name;
+	int32 _namew;
+};
+class HistoryDocument;
+struct HistoryDocumentVoicePlayback {
+	HistoryDocumentVoicePlayback(const HistoryDocument *that);
 
-	AudioData *audio() {
-		return _data;
+	int32 _position;
+	anim::fvalue a_progress;
+	Animation _a_progress;
+};
+struct HistoryDocumentVoice : public BasicInterface<HistoryDocumentVoice> {
+	HistoryDocumentVoice(Interfaces *that) : _playback(0) {
 	}
-
-	void regItem(HistoryItem *item);
-	void unregItem(HistoryItem *item);
-
-	void updateFrom(const MTPMessageMedia &media, HistoryItem *parent);
-
-	bool needsBubble(const HistoryItem *parent) const {
-		return true;
+	~HistoryDocumentVoice() {
+		deleteAndMark(_playback);
 	}
-	bool customInfoLayout() const {
-		return false;
-	}
-	QMargins bubbleMargins() const {
-		return st::msgPadding;
-	}
-
-protected:
-
-	float64 dataProgress() const {
-		return _data->progress();
-	}
-	bool dataFinished() const {
-		return !_data->loading() && !_data->uploading();
-	}
-	bool dataLoaded() const {
-		return _data->loaded();
-	}
-
-private:
-	AudioData *_data;
-
-	void setStatusSize(int32 newSize, qint64 realDuration = 0) const;
-	bool updateStatusText(const HistoryItem *parent) const; // returns showPause
-
+	void ensurePlayback(const HistoryDocument *interfaces) const;
+	void checkPlaybackFinished() const;
+	mutable HistoryDocumentVoicePlayback *_playback;
 };
 
-class HistoryDocument : public HistoryFileMedia {
+class HistoryDocument : public HistoryFileMedia, public Interfaces {
 public:
 
 	HistoryDocument(DocumentData *document, const QString &caption, const HistoryItem *parent);
 	HistoryDocument(const HistoryDocument &other);
 	HistoryMediaType type() const {
-		return MediaTypeDocument;
+		return _data->voice() ? MediaTypeVoiceFile : (_data->song() ? MediaTypeMusicFile : MediaTypeFile);
 	}
 	HistoryMedia *clone() const {
 		return new HistoryDocument(*this);
@@ -1508,10 +1624,6 @@ public:
 		return _data->uploading();
 	}
 
-	bool withThumb() const {
-		return !_data->song() && !_data->thumb->isNull() && _data->thumb->width() && _data->thumb->height();
-	}
-
 	DocumentData *getDocument() {
 		return _data;
 	}
@@ -1527,7 +1639,10 @@ public:
 	ImagePtr replyPreview();
 
 	QString getCaption() const {
-		return _caption.original();
+		if (const HistoryDocumentCaptioned *captioned = Get<HistoryDocumentCaptioned>()) {
+			return captioned->_caption.original();
+		}
+		return QString();
 	}
 	bool needsBubble(const HistoryItem *parent) const {
 		return true;
@@ -1536,11 +1651,13 @@ public:
 		return false;
 	}
 	QMargins bubbleMargins() const {
-		return withThumb() ? QMargins(st::msgFileThumbPadding.left(), st::msgFileThumbPadding.top(), st::msgFileThumbPadding.left(), st::msgFileThumbPadding.bottom()) : st::msgPadding;
+		return Get<HistoryDocumentThumbed>() ? QMargins(st::msgFileThumbPadding.left(), st::msgFileThumbPadding.top(), st::msgFileThumbPadding.left(), st::msgFileThumbPadding.bottom()) : st::msgPadding;
 	}
 	bool hideForwardedFrom() const {
 		return _data->song();
 	}
+
+	void step_voiceProgress(float64 ms, bool timer);
 
 protected:
 
@@ -1556,17 +1673,9 @@ protected:
 
 private:
 
+	void create(bool caption);
+	const HistoryItem *_parent;
 	DocumentData *_data;
-	TextLinkPtr _linksavel, _linkcancell;
-
-	QString _name;
-	int32 _namew;
-	int32 _thumbw;
-
-	mutable int32 _linkw;
-	mutable QString _link;
-
-	Text _caption;
 
 	void setStatusSize(int32 newSize, qint64 realDuration = 0) const;
 	bool updateStatusText(const HistoryItem *parent) const; // returns showPause
@@ -1622,7 +1731,7 @@ public:
 		return _caption.original();
 	}
 	bool needsBubble(const HistoryItem *parent) const {
-		return !_caption.isEmpty() || parent->toHistoryForwarded() || parent->toHistoryReply() || parent->viaBot();
+		return !_caption.isEmpty() || parent->Is<HistoryMessageForwarded>() || parent->toHistoryReply() || parent->viaBot();
 	}
 	bool customInfoLayout() const {
 		return _caption.isEmpty();
@@ -1864,59 +1973,54 @@ void initImageLinkManager();
 void reinitImageLinkManager();
 void deinitImageLinkManager();
 
-enum ImageLinkType {
-	InvalidImageLink = 0,
-	GoogleMapsLink
-};
-struct ImageLinkData {
-	ImageLinkData(const QString &id) : id(id), type(InvalidImageLink), loading(false) {
+struct LocationData {
+	LocationData(const LocationCoords &coords) : coords(coords), loading(false) {
 	}
 
-	QString id;
+	LocationCoords coords;
 	ImagePtr thumb;
-	ImageLinkType type;
 	bool loading;
 
 	void load();
 };
 
-class ImageLinkManager : public QObject {
+class LocationManager : public QObject {
 	Q_OBJECT
 public:
-	ImageLinkManager() : manager(0), black(0) {
+	LocationManager() : manager(0), black(0) {
 	}
 	void init();
 	void reinit();
 	void deinit();
 
-	void getData(ImageLinkData *data);
+	void getData(LocationData *data);
 
-	~ImageLinkManager() {
+	~LocationManager() {
 		deinit();
 	}
 
-	public slots:
+public slots:
 	void onFinished(QNetworkReply *reply);
 	void onFailed(QNetworkReply *reply);
 
 private:
-	void failed(ImageLinkData *data);
+	void failed(LocationData *data);
 
 	QNetworkAccessManager *manager;
-	QMap<QNetworkReply*, ImageLinkData*> dataLoadings, imageLoadings;
-	QMap<ImageLinkData*, int32> serverRedirects;
+	QMap<QNetworkReply*, LocationData*> dataLoadings, imageLoadings;
+	QMap<LocationData*, int32> serverRedirects;
 	ImagePtr *black;
 };
 
-class HistoryImageLink : public HistoryMedia {
+class HistoryLocation : public HistoryMedia {
 public:
 
-	HistoryImageLink(const QString &url, const QString &title = QString(), const QString &description = QString());
+	HistoryLocation(const LocationCoords &coords, const QString &title = QString(), const QString &description = QString());
 	HistoryMediaType type() const {
-		return MediaTypeImageLink;
+		return MediaTypeLocation;
 	}
 	HistoryMedia *clone() const {
-		return new HistoryImageLink(*this);
+		return new HistoryLocation(*this);
 	}
 
 	void initDimensions(const HistoryItem *parent);
@@ -1933,14 +2037,14 @@ public:
 	}
 
 	bool needsBubble(const HistoryItem *parent) const {
-		return !_title.isEmpty() || !_description.isEmpty() || parent->toHistoryForwarded() || parent->toHistoryReply() || parent->viaBot();
+		return !_title.isEmpty() || !_description.isEmpty() || parent->Is<HistoryMessageForwarded>() || parent->toHistoryReply() || parent->viaBot();
 	}
 	bool customInfoLayout() const {
 		return true;
 	}
 
 private:
-	ImageLinkData *_data;
+	LocationData *_data;
 	Text _title, _description;
 	TextLinkPtr _link;
 
@@ -1962,25 +2066,12 @@ private:
 
 };
 
-class HistoryMessageVia {
-public:
-	HistoryMessageVia(int32 userId);
-
-	bool isNull() const;
-	void resize(int32 availw);
-
-	UserData *bot;
-	QString text;
-	int32 width, maxWidth;
-	TextLinkPtr lnk;
-
-};
-
 class HistoryMessage : public HistoryItem {
 public:
 
 	HistoryMessage(History *history, HistoryBlock *block, const MTPDmessage &msg);
-	HistoryMessage(History *history, HistoryBlock *block, MsgId msgId, int32 flags, int32 viaBotId, QDateTime date, int32 from, const QString &msg, const EntitiesInText &entities, HistoryMedia *media); // local forwarded
+	HistoryMessage(History *history, HistoryBlock *block, MsgId msgId, int32 flags, QDateTime date, int32 from, HistoryMessage *fwd); // local forwarded
+	HistoryMessage(History *history, HistoryBlock *block, MsgId msgId, int32 flags, int32 viaBotId, QDateTime date, int32 from, const QString &msg, const EntitiesInText &entities); // local message
 	HistoryMessage(History *history, HistoryBlock *block, MsgId msgId, int32 flags, int32 viaBotId, QDateTime date, int32 from, DocumentData *doc, const QString &caption); // local document
 	HistoryMessage(History *history, HistoryBlock *block, MsgId msgId, int32 flags, int32 viaBotId, QDateTime date, int32 from, PhotoData *photo, const QString &caption); // local photo
 
@@ -1990,11 +2081,11 @@ public:
 	void initDimensions();
 	void fromNameUpdated(int32 width) const;
 
-	virtual HistoryMessageVia *via() const {
-		return (_via && !_via->isNull()) ? _via : 0;
-	}
 	virtual UserData *viaBot() const {
-		return via() ? via()->bot : 0;
+		if (const HistoryMessageVia *via = Get<HistoryMessageVia>()) {
+			return via->_bot;
+		}
+		return 0;
 	}
 
 	int32 plainMaxWidth() const;
@@ -2010,7 +2101,7 @@ public:
 		return drawBubble();
 	}
 	bool displayFromName() const {
-		return hasFromName() && (!emptyText() || !_media || !_media->isDisplayed() || toHistoryReply() || viaBot() || !_media->hideFromName());
+		return hasFromName() && (!emptyText() || !_media || !_media->isDisplayed() || toHistoryReply() || Is<HistoryMessageForwarded>() || viaBot() || !_media->hideFromName());
 	}
 	bool uploading() const {
 		return _media && _media->uploading();
@@ -2047,8 +2138,8 @@ public:
     QString notificationHeader() const;
     QString notificationText() const;
 
-	void updateMedia(const MTPMessageMedia *media) {
-		if (media && _media && _media->type() != MediaTypeWebPage) {
+	void updateMedia(const MTPMessageMedia *media, bool edited = false) {
+		if (!edited && media && _media && _media->type() != MediaTypeWebPage) {
 			_media->updateFrom(*media, this);
 		} else {
 			setMedia(media);
@@ -2068,20 +2159,20 @@ public:
 
 	int32 infoWidth() const {
 		int32 result = _timeWidth;
-		if (!_viewsText.isEmpty()) {
-			result += st::msgDateViewsSpace + _viewsWidth + st::msgDateCheckSpace + st::msgViewsImg.pxWidth();
+		if (const HistoryMessageViews *views = Get<HistoryMessageViews>()) {
+			result += st::msgDateViewsSpace + views->_viewsWidth + st::msgDateCheckSpace + st::msgViewsImg.pxWidth();
 		} else if (id < 0 && history()->peer->isSelf()) {
 			result += st::msgDateCheckSpace + st::msgCheckImg.pxWidth();
 		}
-		if (out() && !fromChannel()) {
+		if (out() && !isPost()) {
 			result += st::msgDateCheckSpace + st::msgCheckImg.pxWidth();
 		}
 		return result;
 	}
 	int32 timeLeft() const {
 		int32 result = 0;
-		if (!_viewsText.isEmpty()) {
-			result += st::msgDateViewsSpace + _viewsWidth + st::msgDateCheckSpace + st::msgViewsImg.pxWidth();
+		if (const HistoryMessageViews *views = Get<HistoryMessageViews>()) {
+			result += st::msgDateViewsSpace + views->_viewsWidth + st::msgDateCheckSpace + st::msgViewsImg.pxWidth();
 		} else if (id < 0 && history()->peer->isSelf()) {
 			result += st::msgDateCheckSpace + st::msgCheckImg.pxWidth();
 		}
@@ -2090,18 +2181,12 @@ public:
 	int32 timeWidth() const {
 		return _timeWidth;
 	}
-	QString viewsText() const {
-		return _viewsText;
-	}
-	int32 viewsWidth() const {
-		return _viewsWidth;
-	}
 
-	virtual QDateTime dateForwarded() const { // dynamic_cast optimize
-		return date;
-	}
-	virtual PeerData *fromForwarded() const { // dynamic_cast optimize
-		return from();
+	int32 viewsCount() const {
+		if (const HistoryMessageViews *views = Get<HistoryMessageViews>()) {
+			return views->_views;
+		}
+		return HistoryItem::viewsCount();
 	}
 
 	HistoryMessage *toHistoryMessage() { // dynamic_cast optimize
@@ -2115,64 +2200,23 @@ public:
 
 protected:
 
+	void create(int32 viaBotId, int32 viewsCount, const PeerId &authorIdOriginal = 0, const PeerId &fromIdOriginal = 0, MsgId originalId = 0);
+
+	bool displayForwardedFrom() const {
+		if (const HistoryMessageForwarded *fwd = Get<HistoryMessageForwarded>()) {
+			return Is<HistoryMessageVia>() || !_media || !_media->isDisplayed() || fwd->_authorOriginal->isChannel() || !_media->hideForwardedFrom();
+		}
+		return false;
+	}
+	void paintForwardedInfo(Painter &p, int32 x, int32 y, int32 w, bool selected) const;
+
 	Text _text;
 
 	int32 _textWidth, _textHeight;
-	HistoryMessageVia *_via;
 
 	HistoryMedia *_media;
 	QString _timeText;
 	int32 _timeWidth;
-
-	QString _viewsText;
-	int32 _views, _viewsWidth;
-
-};
-
-class HistoryForwarded : public HistoryMessage {
-public:
-
-	HistoryForwarded(History *history, HistoryBlock *block, const MTPDmessage &msg);
-	HistoryForwarded(History *history, HistoryBlock *block, MsgId id, QDateTime date, int32 from, HistoryMessage *msg);
-
-	void initDimensions();
-	void fwdNameUpdated() const;
-
-	void draw(Painter &p, const QRect &r, uint32 selection, uint64 ms) const;
-	void drawForwardedFrom(Painter &p, int32 x, int32 y, int32 w, bool selected) const;
-	void drawMessageText(Painter &p, QRect trect, uint32 selection) const;
-	int32 resize(int32 width);
-	bool hasPoint(int32 x, int32 y) const;
-	void getState(TextLinkPtr &lnk, HistoryCursorState &state, int32 x, int32 y) const;
-	void getStateFromMessageText(TextLinkPtr &lnk, HistoryCursorState &state, int32 x, int32 y, const QRect &r) const;
-	void getForwardedState(TextLinkPtr &lnk, HistoryCursorState &state, int32 x, int32 w) const;
-	void getSymbol(uint16 &symbol, bool &after, bool &upon, int32 x, int32 y) const;
-
-	QDateTime dateForwarded() const {
-		return fwdDate;
-	}
-	PeerData *fromForwarded() const {
-		return fwdFrom;
-	}
-	QString selectedText(uint32 selection) const;
-	bool displayForwardedFrom() const {
-		return via() || !_media || !_media->isDisplayed() || (fwdFrom->isChannel() || !_media->hideForwardedFrom());
-	}
-
-	HistoryForwarded *toHistoryForwarded() {
-		return this;
-	}
-	const HistoryForwarded *toHistoryForwarded() const {
-		return this;
-	}
-
-protected:
-
-	QDateTime fwdDate;
-	PeerData *fwdFrom;
-	mutable Text fwdFromName;
-	mutable int32 fwdFromVersion;
-	int32 fromWidth;
 
 };
 
@@ -2206,7 +2250,7 @@ public:
 	void getSymbol(uint16 &symbol, bool &after, bool &upon, int32 x, int32 y) const;
 
 	PeerData *replyTo() const {
-		return replyToMsg ? replyToMsg->from() : 0;
+		return replyToMsg ? replyToMsg->author() : 0;
 	}
 	QString selectedText(uint32 selection) const;
 
@@ -2228,9 +2272,6 @@ protected:
 	mutable int32 replyToVersion;
 	mutable int32 _maxReplyWidth;
 	HistoryMessageVia *_replyToVia;
-	HistoryMessageVia *replyToVia() const {
-		return (_replyToVia && !_replyToVia->isNull()) ? _replyToVia : 0;
-	}
 	int32 toWidth;
 
 };
@@ -2238,8 +2279,21 @@ protected:
 inline int32 newMessageFlags(PeerData *p) {
 	return p->isSelf() ? 0 : (((p->isChat() || (p->isUser() && !p->asUser()->botInfo)) ? MTPDmessage::flag_unread : 0) | MTPDmessage::flag_out);
 }
-inline int32 newForwardedFlags(PeerData *p, int32 from, HistoryMessage *msg) {
-	return newMessageFlags(p) | (from ? MTPDmessage::flag_from_id : 0) | (msg->via() ? MTPDmessage::flag_via_bot_id : 0) | (!p->isChannel() && msg->getMedia() && (msg->getMedia()->type() == MediaTypeAudio/* || msg->getMedia()->type() == MediaTypeVideo*/) ? MTPDmessage::flag_media_unread : 0);
+inline int32 newForwardedFlags(PeerData *p, int32 from, HistoryMessage *fwd) {
+	int32 result = newMessageFlags(p) | (from ? MTPDmessage::flag_from_id : 0);
+	if (fwd->Is<HistoryMessageVia>()) {
+		result |= MTPDmessage::flag_via_bot_id;
+	}
+	if (!p->isChannel()) {
+		if (HistoryMedia *media = fwd->getMedia()) {
+			if (media->type() == MediaTypeVoiceFile) {
+				result |= MTPDmessage::flag_media_unread;
+//			} else if (media->type() == MediaTypeVideo) {
+//				result |= MTPDmessage::flag_media_unread;
+			}
+		}
+	}
+	return result;
 }
 
 class HistoryServiceMsg : public HistoryItem {
@@ -2249,6 +2303,8 @@ public:
 	HistoryServiceMsg(History *history, HistoryBlock *block, MsgId msgId, QDateTime date, const QString &msg, int32 flags = 0, HistoryMedia *media = 0, int32 from = 0);
 
 	void initDimensions();
+
+	void countPositionAndSize(int32 &left, int32 &width) const;
 
 	void draw(Painter &p, const QRect &r, uint32 selection, uint64 ms) const;
 	int32 resize(int32 width);

@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
@@ -791,6 +791,16 @@ public:
 		return RPCFailHandlerPtr(new RPCBindedFailHandlerOwnedNo<T, TReceiver>(b, static_cast<TReceiver*>(this), onFail));
 	}
 
+	virtual void rpcClear() {
+		rpcInvalidate();
+	}
+
+	virtual ~RPCSender() {
+		rpcInvalidate();
+	}
+
+protected:
+
 	void rpcInvalidate() {
 		for (DoneHandlers::iterator i = _rpcDoneHandlers.begin(), e = _rpcDoneHandlers.end(); i != e; ++i) {
 			(*i)->invalidate();
@@ -800,10 +810,6 @@ public:
 			(*i)->invalidate();
 		}
 		_rpcFailHandlers.clear();
-	}
-
-	~RPCSender() {
-		rpcInvalidate();
 	}
 
 };

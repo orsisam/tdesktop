@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 "lng_language_name" = "English";
 "lng_switch_to_this" = "Switch to English";
@@ -123,6 +123,11 @@ Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
 "lng_server_error" = "Internal server error.";
 "lng_flood_error" = "Too many tries. Please try again later.";
 "lng_gif_error" = "An error has occured while reading GIF animation :(";
+"lng_edit_error" = "You cannot edit this message";
+"lng_edit_deleted" = "This message was deleted";
+"lng_edit_too_long" = "Your message text is too long";
+"lng_edit_message" = "Edit message";
+"lng_edit_message_text" = "New message text..";
 "lng_deleted" = "Unknown";
 "lng_deleted_message" = "Deleted message";
 
@@ -262,6 +267,7 @@ Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
 "lng_settings_bg_from_gallery" = "Choose from gallery";
 "lng_settings_bg_from_file" = "Choose from file";
 "lng_settings_bg_tile" = "Tile background";
+"lng_settings_adaptive_wide" = "Adaptive layout for wide screens";
 
 "lng_backgrounds_header" = "Choose your new chat background";
 
@@ -555,7 +561,11 @@ Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
 
 "lng_channel_public_link_copied" = "Link copied to clipboard.";
 
-"lng_forwarded_from" = "Forwarded from";
+"lng_forwarded" = "Forwarded from {user}";
+"lng_forwarded_channel" = "Forwarded from {channel}";
+"lng_forwarded_via" = "Forwarded from {user} via {inline_bot}";
+"lng_forwarded_channel_via" = "Forwarded from {channel} via {inline_bot}";
+"lng_forwarded_signed" = "{channel} ({user})";
 "lng_in_reply_to" = "In reply to";
 
 "lng_attach_failed" = "Failed";
@@ -638,12 +648,17 @@ Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
 "lng_cant_invite_not_contact" = "Sorry, you can only add mutual contacts\nto groups at the moment. {more_info}";
 "lng_cant_invite_not_contact_channel" = "Sorry, you can only add mutual contacts\nto channels at the moment. {more_info}";
 "lng_cant_more_info" = "More info »";
+"lng_cant_invite_privacy" = "Sorry, you cannot add this user to groups because of the privacy settings.";
+"lng_cant_invite_privacy_channel" = "Sorry, you cannot add this user to channels because of the privacy settings.";
 
 "lng_send_button" = "Send";
 "lng_message_ph" = "Write a message..";
 "lng_comment_ph" = "Write a comment..";
 "lng_broadcast_ph" = "Broadcast a message..";
+"lng_broadcast_silent_ph" = "Silent broadcast..";
 "lng_record_cancel" = "Release outside this field to cancel";
+"lng_will_be_notified" = "Members will be notified when you post";
+"lng_wont_be_notified" = "Members will not be notified when you post";
 "lng_empty_history" = "";
 "lng_willbe_history" = "Please select a chat to start messaging";
 "lng_message_with_from" = "[c]{from}:[/c] {message}";
@@ -701,15 +716,11 @@ Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
 "lng_context_view_group" = "View group info";
 "lng_context_view_channel" = "View channel info";
 
-"lng_context_open_link" = "Open Link";
 "lng_context_copy_link" = "Copy Link";
-"lng_context_open_email" = "Write to this address";
+"lng_context_copy_post_link" = "Copy Post Link";
 "lng_context_copy_email" = "Copy email address";
-"lng_context_open_hashtag" = "Search by hashtag";
 "lng_context_copy_hashtag" = "Copy hashtag";
-"lng_context_open_mention" = "Open profile";
 "lng_context_copy_mention" = "Copy username";
-"lng_context_open_image" = "Open Image";
 "lng_context_save_image" = "Save Image As..";
 "lng_context_forward_image" = "Forward Image";
 "lng_context_delete_image" = "Delete Image";
@@ -718,13 +729,10 @@ Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
 "lng_context_cancel_download" = "Cancel Download";
 "lng_context_show_in_folder" = "Show in Folder";
 "lng_context_show_in_finder" = "Show in Finder";
-"lng_context_open_video" = "Open Video";
 "lng_context_save_video" = "Save Video As..";
-"lng_context_open_audio" = "Open Audio";
 "lng_context_save_audio" = "Save Audio As..";
 "lng_context_pack_info" = "Pack Info";
 "lng_context_pack_add" = "Add Stickers";
-"lng_context_open_file" = "Open File";
 "lng_context_save_file" = "Save File As..";
 "lng_context_forward_file" = "Forward File";
 "lng_context_delete_file" = "Delete File";
@@ -733,6 +741,7 @@ Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
 "lng_context_save_gif" = "Save GIF";
 "lng_context_to_msg" = "Go To Message";
 "lng_context_reply_msg" = "Reply";
+"lng_context_edit_msg" = "Edit";
 "lng_context_forward_msg" = "Forward Message";
 "lng_context_delete_msg" = "Delete Message";
 "lng_context_select_msg" = "Select Message";
@@ -769,6 +778,7 @@ Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
 "lng_edit_group_title" = "Edit group name";
 "lng_edit_contact_title" = "Edit contact name";
 "lng_edit_channel_title" = "Edit channel";
+"lng_edit_sign_messages" = "Sign messages";
 "lng_edit_group" = "Edit group";
 "lng_edit_self_title" = "Edit your name";
 "lng_confirm_contact_data" = "New Contact";
@@ -834,7 +844,7 @@ Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
 
 "lng_new_version_wrap" = "Telegram Desktop was updated to version {version}\n\n{changes}\n\nFull version history is available here:\n{link}";
 "lng_new_version_minor" = "— Bug fixes and other minor improvements";
-"lng_new_version_text" = "GIF revolution: 10x faster sending and downloading, autoplay, save your favorite GIFs to a dedicated tab on the sticker panel.\n\nMore about GIFs:\n{gifs_link}\n\nInline bots: A new way to add bot content to any chat. Type a bot's username and your query in the text field to get instant results and send them to your chat partner. Try typing “@gif dog” in your next chat. Sample bots: @gif, @wiki, @bing, @vid, @bold.\n\nMore about inline bots:\n{bots_link}\n\nAlso in this release: New cute design for media, automatic download settings for photos, voice messages and GIFs.";
+"lng_new_version_text" = "— Edit your messages in channels and supergroups.\n— Share links to specific posts in channels via the post context menu.\n— Add admin signatures to messages in channels.\n— Send silent messages in channels that will not notify members. Useful for non-urgent or late night posting.";
 
 "lng_menu_insert_unicode" = "Insert Unicode control character";
 

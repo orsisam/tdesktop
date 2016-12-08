@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #pragma once
 
@@ -35,6 +35,28 @@ T *exchange(T *&ptr) {
 
 struct NullType {
 };
+
+#if __cplusplus < 199711L
+#define TDESKTOP_CUSTOM_NULLPTR
+#endif
+
+#ifdef TDESKTOP_CUSTOM_NULLPTR
+class NullPointerClass {
+public:
+	template <typename T>
+	operator T*() const {
+		return 0;
+	}
+	template <typename C, typename T>
+	operator T C::*() const {
+		return 0;
+	}
+
+private:
+	void operator&() const;
+};
+extern NullPointerClass nullptr;
+#endif
 
 template <typename T>
 class OrderedSet : public QMap<T, NullType> {
@@ -83,6 +105,16 @@ using std::exception;
 using std::swap;
 
 #include "logs.h"
+
+static volatile int *t_assert_nullptr = 0;
+inline void t_noop() {}
+inline void t_assert_fail(const char *message, const char *file, int32 line) {
+	LOG(("Assertion Failed! %1 %2:%3").arg(message).arg(file).arg(line));
+	*t_assert_nullptr = 0;
+}
+#define t_assert_full(condition, message, file, line) ((!(condition)) ? t_assert_fail(message, file, line) : t_noop())
+#define t_assert_c(condition, comment) t_assert_full(condition, "\"" #condition "\" (" comment ")", __FILE__, __LINE__)
+#define t_assert(condition) t_assert_full(condition, "\"" #condition "\"", __FILE__, __LINE__)
 
 class Exception : public exception {
 public:
@@ -133,10 +165,12 @@ inline void mylocaltime(struct tm * _Tm, const time_t * _Time) {
 #endif
 }
 
-void installSignalHandlers();
+namespace ThirdParty {
 
-void initThirdParty(); // called by Global::Initializer
-void deinitThirdParty();
+	void start();
+	void finish();
+
+}
 
 bool checkms(); // returns true if time has changed
 uint64 getms(bool checked = false);
@@ -208,6 +242,17 @@ void memset_rand(void *data, uint32 len);
 template <typename T>
 inline void memsetrnd(T &value) {
 	memset_rand(&value, sizeof(value));
+}
+
+inline void memset_rand_bad(void *data, uint32 len) {
+	for (uchar *i = reinterpret_cast<uchar*>(data), *e = i + len; i != e; ++i) {
+		*i = uchar(rand() & 0xFF);
+	}
+}
+
+template <typename T>
+inline void memsetrnd_bad(T &value) {
+	memset_rand_bad(&value, sizeof(value));
 }
 
 class ReadLockerAttempt {
@@ -282,7 +327,7 @@ enum DataBlockId {
 	dbiKey                  = 0x00,
 	dbiUser                 = 0x01,
 	dbiDcOptionOld          = 0x02,
-	dbiMaxGroupCount        = 0x03,
+	dbiChatSizeMax          = 0x03,
 	dbiMutePeer             = 0x04,
 	dbiSendKey              = 0x05,
 	dbiAutoStart            = 0x06,
@@ -323,12 +368,13 @@ enum DataBlockId {
 	dbiSongVolume           = 0x29,
 	dbiWindowsNotifications = 0x30,
 	dbiIncludeMuted         = 0x31,
-	dbiMaxMegaGroupCount    = 0x32,
+	dbiMegagroupSizeMax     = 0x32,
 	dbiDownloadPath         = 0x33,
 	dbiAutoDownload         = 0x34,
 	dbiSavedGifsLimit       = 0x35,
 	dbiShowingSavedGifs     = 0x36,
 	dbiAutoPlay             = 0x37,
+	dbiAdaptiveForWide      = 0x38,
 
 	dbiEncryptedWithSalt    = 333,
 	dbiEncrypted            = 444,
@@ -508,6 +554,42 @@ static int32 QuarterArcLength = (FullArcLength / 4);
 static int32 MinArcLength = (FullArcLength / 360);
 static int32 AlmostFullArcLength = (FullArcLength - MinArcLength);
 
+template <typename T1, typename T2>
+class RefPairImplementation {
+public:
+	template <typename T3, typename T4>
+	const RefPairImplementation &operator=(const RefPairImplementation<T3, T4> &other) const {
+		_first = other._first;
+		_second = other._second;
+		return *this;
+	}
+
+	template <typename T3, typename T4>
+	const RefPairImplementation &operator=(const QPair<T3, T4> &other) const {
+		_first = other.first;
+		_second = other.second;
+		return *this;
+	}
+
+private:
+	RefPairImplementation(T1 &first, T2 &second) : _first(first), _second(second) {
+	}
+	RefPairImplementation(const RefPairImplementation &other);
+
+	template <typename T3, typename T4>
+	friend RefPairImplementation<T3, T4> RefPairCreator(T3 &first, T4 &second);
+
+	T1 &_first;
+	T2 &_second;
+};
+
+template <typename T1, typename T2>
+inline RefPairImplementation<T1, T2> RefPairCreator(T1 &first, T2 &second) {
+	return RefPairImplementation<T1, T2>(first, second);
+}
+
+#define RefPair(Type1, Name1, Type2, Name2) Type1 Name1; Type2 Name2; RefPairCreator(Name1, Name2)
+
 template <typename I>
 inline void destroyImplementation(I *&ptr) {
 	if (ptr) {
@@ -516,6 +598,222 @@ inline void destroyImplementation(I *&ptr) {
 	}
 	deleteAndMark(ptr);
 }
+
+class Interfaces;
+typedef void(*InterfaceConstruct)(void *location, Interfaces *interfaces);
+typedef void(*InterfaceDestruct)(void *location);
+typedef void(*InterfaceAssign)(void *location, void *waslocation);
+
+struct InterfaceWrapStruct {
+	InterfaceWrapStruct() : Size(0), Construct(0), Destruct(0) {
+	}
+	InterfaceWrapStruct(int size, InterfaceConstruct construct, InterfaceDestruct destruct, InterfaceAssign assign)
+	: Size(size)
+	, Construct(construct)
+	, Destruct(destruct)
+	, Assign(assign) {
+	}
+	int Size;
+	InterfaceConstruct Construct;
+	InterfaceDestruct Destruct;
+	InterfaceAssign Assign;
+};
+
+template <int Value, int Denominator>
+struct CeilDivideMinimumOne {
+	static const int Result = ((Value / Denominator) + ((!Value || (Value % Denominator)) ? 1 : 0));
+};
+
+template <typename Type>
+struct InterfaceWrapTemplate {
+	static const int Size = CeilDivideMinimumOne<sizeof(Type), sizeof(uint64)>::Result * sizeof(uint64);
+	static void Construct(void *location, Interfaces *interfaces) {
+		new (location) Type(interfaces);
+	}
+	static void Destruct(void *location) {
+		((Type*)location)->~Type();
+	}
+	static void Assign(void *location, void *waslocation) {
+		*((Type*)location) = *((Type*)waslocation);
+	}
+};
+
+extern InterfaceWrapStruct InterfaceWraps[64];
+extern QAtomicInt InterfaceIndexLast;
+
+template <typename Type>
+class BasicInterface {
+public:
+	static int Index() {
+		static QAtomicInt _index(0);
+		if (int index = _index.loadAcquire()) {
+			return index - 1;
+		}
+		while (true) {
+			int last = InterfaceIndexLast.loadAcquire();
+			if (InterfaceIndexLast.testAndSetOrdered(last, last + 1)) {
+				t_assert(last < 64);
+				if (_index.testAndSetOrdered(0, last + 1)) {
+					InterfaceWraps[last] = InterfaceWrapStruct(InterfaceWrapTemplate<Type>::Size, InterfaceWrapTemplate<Type>::Construct, InterfaceWrapTemplate<Type>::Destruct, InterfaceWrapTemplate<Type>::Assign);
+				}
+				break;
+			}
+		}
+		return _index.loadAcquire() - 1;
+	}
+	static uint64 Bit() {
+		return (1 << Index());
+	}
+
+};
+
+template <typename Type>
+class BasicInterfaceWithPointer : public BasicInterface<Type> {
+public:
+	BasicInterfaceWithPointer(Interfaces *interfaces) : interfaces(interfaces) {
+	}
+	Interfaces *interfaces = 0;
+};
+
+class InterfacesMetadata {
+public:
+
+	InterfacesMetadata(uint64 mask) : size(0), last(64), _mask(mask) {
+		for (int i = 0; i < 64; ++i) {
+			uint64 m = (1 << i);
+			if (_mask & m) {
+				int s = InterfaceWraps[i].Size;
+				if (s) {
+					offsets[i] = size;
+					size += s;
+				} else {
+					offsets[i] = -1;
+				}
+			} else if (_mask < m) {
+				last = i;
+				for (; i < 64; ++i) {
+					offsets[i] = -1;
+				}
+			} else {
+				offsets[i] = -1;
+			}
+		}
+	}
+
+	int size, last;
+	int offsets[64];
+
+	bool equals(const uint64 &mask) const {
+		return _mask == mask;
+	}
+
+private:
+	uint64 _mask;
+
+};
+
+const InterfacesMetadata *GetInterfacesMetadata(uint64 mask);
+
+class Interfaces {
+public:
+
+	Interfaces(uint64 mask = 0) : _data(zerodata()) {
+		if (mask) {
+			const InterfacesMetadata *meta = GetInterfacesMetadata(mask);
+			int32 size = sizeof(const InterfacesMetadata *) + meta->size;
+			void *data = malloc(size);
+			if (!data) { // terminate if we can't allocate memory
+				throw "Can't allocate memory!";
+			}
+
+			_data = data;
+			_meta() = meta;
+			for (int i = 0; i < meta->last; ++i) {
+				int offset = meta->offsets[i];
+				if (offset >= 0) {
+					try {
+						InterfaceWraps[i].Construct(_dataptrunsafe(offset), this);
+					} catch (...) {
+						while (i > 0) {
+							--i;
+							offset = meta->offsets[--i];
+							if (offset >= 0) {
+								InterfaceWraps[i].Destruct(_dataptrunsafe(offset));
+							}
+						}
+						throw;
+					}
+				}
+			}
+		}
+	}
+	void UpdateInterfaces(uint64 mask = 0) {
+		if (!_meta()->equals(mask)) {
+			Interfaces tmp(mask);
+			tmp.swap(*this);
+
+			if (_data != zerodata() && tmp._data != zerodata()) {
+				const InterfacesMetadata *meta = _meta(), *wasmeta = tmp._meta();
+				for (int i = 0; i < meta->last; ++i) {
+					int offset = meta->offsets[i], wasoffset = wasmeta->offsets[i];
+					if (offset >= 0 && wasoffset >= 0) {
+						InterfaceWraps[i].Assign(_dataptrunsafe(offset), tmp._dataptrunsafe(wasoffset));
+					}
+				}
+			}
+		}
+	}
+	~Interfaces() {
+		if (_data != zerodata()) {
+			const InterfacesMetadata *meta = _meta();
+			for (int i = 0; i < meta->last; ++i) {
+				int offset = meta->offsets[i];
+				if (offset >= 0) {
+					InterfaceWraps[i].Destruct(_dataptrunsafe(offset));
+				}
+			}
+			free(_data);
+		}
+	}
+
+	template <typename Type>
+	Type *Get() {
+		return static_cast<Type*>(_dataptr(_meta()->offsets[Type::Index()]));
+	}
+	template <typename Type>
+	const Type *Get() const {
+		return static_cast<const Type*>(_dataptr(_meta()->offsets[Type::Index()]));
+	}
+	template <typename Type>
+	bool Is() const {
+		return (_meta()->offsets[Type::Index()] >= 0);
+	}
+
+private:
+	static const InterfacesMetadata *ZeroInterfacesMetadata;
+	static void *zerodata() {
+		return &ZeroInterfacesMetadata;
+	}
+
+	void *_dataptrunsafe(int skip) const {
+		return (char*)_data + sizeof(const InterfacesMetadata*) + skip;
+	}
+	void *_dataptr(int skip) const {
+		return (skip >= 0) ? _dataptrunsafe(skip) : 0;
+	}
+	const InterfacesMetadata *&_meta() const {
+		return *static_cast<const InterfacesMetadata**>(_data);
+	}
+	void *_data;
+
+	Interfaces(const Interfaces &other);
+	Interfaces &operator=(const Interfaces &other);
+
+	void swap(Interfaces &other) {
+		std::swap(_data, other._data);
+	}
+
+};
 
 template <typename R>
 class FunctionImplementation {

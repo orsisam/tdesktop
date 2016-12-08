@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #include "stdafx.h"
 #include "text.h"
@@ -36,7 +36,7 @@ namespace {
 	const QRegularExpression _reMailName(qsl("[a-zA-Z\\-_\\.0-9]{1,256}$"));
 	const QRegularExpression _reMailStart(qsl("^[a-zA-Z\\-_\\.0-9]{1,256}\\@"));
 	const QRegularExpression _reHashtag(qsl("(^|[\\s\\.,:;<>|'\"\\[\\]\\{\\}`\\~\\!\\%\\^\\*\\(\\)\\-\\+=\\x10])#[\\w]{2,64}([\\W]|$)"), QRegularExpression::UseUnicodePropertiesOption);
-	const QRegularExpression _reMention(qsl("(^|[\\s\\.,:;<>|'\"\\[\\]\\{\\}`\\~\\!\\%\\^\\*\\(\\)\\-\\+=\\x10])@[A-Za-z_0-9]{3,32}([\\W]|$)"), QRegularExpression::UseUnicodePropertiesOption);
+	const QRegularExpression _reMention(qsl("(^|[\\s\\.,:;<>|'\"\\[\\]\\{\\}`\\~\\!\\%\\^\\*\\(\\)\\-\\+=\\x10])@[A-Za-z_0-9]{1,32}([\\W]|$)"), QRegularExpression::UseUnicodePropertiesOption);
 	const QRegularExpression _reBotCommand(qsl("(^|[\\s\\.,:;<>|'\"\\[\\]\\{\\}`\\~\\!\\%\\^\\*\\(\\)\\-\\+=\\x10])/[A-Za-z_0-9]{1,64}(@[A-Za-z_0-9]{5,32})?([\\W]|$)"));
 	const QRegularExpression _rePre(qsl("(^|[\\s\\.,:;<>|'\"\\[\\]\\{\\}`\\~\\!\\?\\%\\^\\*\\(\\)\\-\\+=\\x10])(````?)[\\s\\S]+?(````?)([\\s\\.,:;<>|'\"\\[\\]\\{\\}`\\~\\!\\?\\%\\^\\*\\(\\)\\-\\+=\\x10]|$)"), QRegularExpression::UseUnicodePropertiesOption);
 	const QRegularExpression _reCode(qsl("(^|[\\s\\.,:;<>|'\"\\[\\]\\{\\}`\\~\\!\\?\\%\\^\\*\\(\\)\\-\\+=\\x10])(`)[^\\n]+?(`)([\\s\\.,:;<>|'\"\\[\\]\\{\\}`\\~\\!\\?\\%\\^\\*\\(\\)\\-\\+=\\x10]|$)"), QRegularExpression::UseUnicodePropertiesOption);
@@ -455,6 +455,25 @@ public:
 		}
 	}
 
+	bool readSkipBlockCommand() {
+		const QChar *afterCmd = textSkipCommand(ptr, end, links.size() < 0x7FFF);
+		if (afterCmd == ptr) {
+			return false;
+		}
+
+		ushort cmd = (++ptr)->unicode();
+		++ptr;
+
+		switch (cmd) {
+		case TextCommandSkipBlock:
+			createSkipBlock(ptr->unicode(), (ptr + 1)->unicode());
+		break;
+		}
+
+		ptr = afterCmd;
+		return true;
+	}
+
 	bool readCommand() {
 		const QChar *afterCmd = textSkipCommand(ptr, end, links.size() < 0x7FFF);
 		if (afterCmd == ptr) {
@@ -530,7 +549,6 @@ public:
 		} break;
 
 		case TextCommandSkipBlock:
-			createBlock();
 			createSkipBlock(ptr->unicode(), (ptr + 1)->unicode());
 		break;
 
@@ -703,6 +721,13 @@ public:
 			if (sumFinished || _t->_text.size() >= 0x8000) break; // 32k max
 		}
 		createBlock();
+		if (sumFinished && rich) { // we could've skipped the final skip block command
+			for (; ptr < end; ++ptr) {
+				if (*ptr == TextCommand && readSkipBlockCommand()) {
+					break;
+				}
+			}
+		}
 		removeFlags.clear();
 
 		_t->_links.resize(maxLnkIndex);
@@ -886,20 +911,25 @@ namespace {
 
 void TextLink::onClick(Qt::MouseButton button) const {
 	if (button == Qt::LeftButton || button == Qt::MiddleButton) {
+		PopupTooltip::Hide();
+
 		QString url = TextLink::encoded();
-		QRegularExpressionMatch telegramMeUser = QRegularExpression(qsl("^https?://telegram\\.me/([a-zA-Z0-9\\.\\_]+)/?(\\?|$)"), QRegularExpression::CaseInsensitiveOption).match(url);
+		QRegularExpressionMatch telegramMeUser = QRegularExpression(qsl("^https?://telegram\\.me/([a-zA-Z0-9\\.\\_]+)(/?\\?|/?$|/(\\d+)/?(?:\\?|$))"), QRegularExpression::CaseInsensitiveOption).match(url);
 		QRegularExpressionMatch telegramMeGroup = QRegularExpression(qsl("^https?://telegram\\.me/joinchat/([a-zA-Z0-9\\.\\_\\-]+)(\\?|$)"), QRegularExpression::CaseInsensitiveOption).match(url);
 		QRegularExpressionMatch telegramMeStickers = QRegularExpression(qsl("^https?://telegram\\.me/addstickers/([a-zA-Z0-9\\.\\_]+)(\\?|$)"), QRegularExpression::CaseInsensitiveOption).match(url);
 		QRegularExpressionMatch telegramMeShareUrl = QRegularExpression(qsl("^https?://telegram\\.me/share/url\\?(.+)$"), QRegularExpression::CaseInsensitiveOption).match(url);
-		if (telegramMeUser.hasMatch()) {
-			QString params = url.mid(telegramMeUser.captured(0).size());
-			url = qsl("tg://resolve/?domain=") + myUrlEncode(telegramMeUser.captured(1)) + (params.isEmpty() ? QString() : '&' + params);
-		} else if (telegramMeGroup.hasMatch()) {
+		if (telegramMeGroup.hasMatch()) {
 			url = qsl("tg://join?invite=") + myUrlEncode(telegramMeGroup.captured(1));
 		} else if (telegramMeStickers.hasMatch()) {
 			url = qsl("tg://addstickers?set=") + myUrlEncode(telegramMeStickers.captured(1));
 		} else if (telegramMeShareUrl.hasMatch()) {
 			url = qsl("tg://msg_url?") + telegramMeShareUrl.captured(1);
+		} else if (telegramMeUser.hasMatch()) {
+			QString params = url.mid(telegramMeUser.captured(0).size()), postParam;
+			if (QRegularExpression(qsl("^/\\d+/?(?:\\?|$)")).match(telegramMeUser.captured(2)).hasMatch()) {
+				postParam = qsl("&post=") + telegramMeUser.captured(3);
+			}
+			url = qsl("tg://resolve/?domain=") + myUrlEncode(telegramMeUser.captured(1)) + postParam + (params.isEmpty() ? QString() : '&' + params);
 		}
 
 		if (QRegularExpression(qsl("^tg://[a-zA-Z0-9]+"), QRegularExpression::CaseInsensitiveOption).match(url).hasMatch()) {
@@ -912,6 +942,7 @@ void TextLink::onClick(Qt::MouseButton button) const {
 
 void EmailLink::onClick(Qt::MouseButton button) const {
 	if (button == Qt::LeftButton || button == Qt::MiddleButton) {
+		PopupTooltip::Hide();
 		QUrl url(qstr("mailto:") + _email);
 		if (!QDesktopServices::openUrl(url)) {
 			psOpenFile(url.toString(QUrl::FullyEncoded), true);
@@ -923,9 +954,20 @@ void CustomTextLink::onClick(Qt::MouseButton button) const {
 	Ui::showLayer(new ConfirmLinkBox(text()));
 }
 
+void LocationLink::onClick(Qt::MouseButton button) const {
+	if (!psLaunchMaps(_coords)) {
+		QDesktopServices::openUrl(_text);
+	}
+}
+
+void LocationLink::setup() {
+	QString latlon(qsl("%1,%2").arg(_coords.lat).arg(_coords.lon));
+	_text = qsl("https://maps.google.com/maps?q=") + latlon + qsl("&ll=") + latlon + qsl("&z=16");
+}
+
 void MentionLink::onClick(Qt::MouseButton button) const {
 	if (button == Qt::LeftButton || button == Qt::MiddleButton) {
-		App::openPeerByName(_tag.mid(1), true);
+		App::openPeerByName(_tag.mid(1), ShowAtProfileMsgId);
 	}
 }
 
@@ -952,7 +994,7 @@ public:
 		return _blockEnd(t, i, e) - (*i)->from();
 	}
 
-	TextPainter(QPainter *p, const Text *t) : _p(p), _t(t), _elideLast(false), _elideRemoveFromEnd(0), _str(0), _elideSavedBlock(0), _lnkResult(0), _inTextFlag(0), _getSymbol(0), _getSymbolAfter(0), _getSymbolUpon(0) {
+	TextPainter(QPainter *p, const Text *t) : _p(p), _t(t), _elideLast(false), _breakEverywhere(false), _elideRemoveFromEnd(0), _str(0), _elideSavedBlock(0), _lnkResult(0), _inTextFlag(0), _getSymbol(0), _getSymbolAfter(0), _getSymbolUpon(0) {
 	}
 
 	void initNextParagraph(Text::TextBlocks::const_iterator i) {
@@ -1150,7 +1192,7 @@ public:
 					bool elidedLine = _elideLast && (_y + elidedLineHeight >= _yToElide);
 					if (elidedLine) {
 						_lineHeight = elidedLineHeight;
-					} else if (f != j) {
+					} else if (f != j && !_breakEverywhere) {
 						// word did not fit completely, so we roll back the state to the beginning of this long word
 						j = f;
 						_wLeft = f_wLeft;
@@ -1209,7 +1251,7 @@ public:
 		}
 	}
 
-	void drawElided(int32 left, int32 top, int32 w, style::align align, int32 lines, int32 yFrom, int32 yTo, int32 removeFromEnd) {
+	void drawElided(int32 left, int32 top, int32 w, style::align align, int32 lines, int32 yFrom, int32 yTo, int32 removeFromEnd, bool breakEverywhere) {
 		if (lines <= 0 || _t->isNull()) return;
 
 		if (yTo < 0 || (lines - 1) * _t->_font->height < yTo) {
@@ -1217,6 +1259,7 @@ public:
 			_elideLast = true;
 			_elideRemoveFromEnd = removeFromEnd;
 		}
+		_breakEverywhere = breakEverywhere;
 		draw(left, top, w, align, yFrom, yTo);
 	}
 
@@ -1230,7 +1273,7 @@ public:
 		return *_lnkResult;
 	}
 
-	void getState(TextLinkPtr &lnk, bool &inText, int32 x, int32 y, int32 w, style::align align) {
+	void getState(TextLinkPtr &lnk, bool &inText, int32 x, int32 y, int32 w, style::align align, bool breakEverywhere) {
 		lnk = TextLinkPtr();
 		inText = false;
 
@@ -1239,6 +1282,7 @@ public:
 			_lnkY = y;
 			_lnkResult = &lnk;
 			_inTextFlag = &inText;
+			_breakEverywhere = breakEverywhere;
 			draw(0, 0, w, align, _lnkY, _lnkY + 1);
 			lnk = *_lnkResult;
 		}
@@ -2395,7 +2439,7 @@ private:
 
 	QPainter *_p;
 	const Text *_t;
-	bool _elideLast;
+	bool _elideLast, _breakEverywhere;
 	int32 _elideRemoveFromEnd;
 	style::align _align;
 	QPen _originalPen;
@@ -2571,15 +2615,6 @@ void Text::setMarkedText(style::font font, const QString &text, const EntitiesIn
 	_font = font;
 	clean();
 	{
-//		QByteArray ba = text.toUtf8(); // chars for OS X crash investigation
-//		const char *ch = ba.constData();
-//		LOG(("STR: %1").arg(text));
-//		LOG(("BYTES: %1").arg(mb(ba.constData(), ba.size()).str()));
-//		for (int32 i = 0; i < text.size(); ++i) {
-//			LOG(("LETTER %1: '%2' - %3").arg(i).arg(text.at(i)).arg(text.at(i).unicode()));
-//		}
-//		int32 w = _font->width(text);
-
 //		QString newText; // utf16 of the text for emoji
 //		newText.reserve(8 * text.size());
 //		for (const QChar *ch = text.constData(), *e = ch + text.size(); ch != e; ++ch) {
@@ -2722,6 +2757,111 @@ void Text::removeSkipBlock() {
 	}
 }
 
+int32 Text::countWidth(int32 w) const {
+	QFixed width = w;
+	if (width < _minResizeWidth) width = _minResizeWidth;
+	if (width >= _maxWidth) {
+		return _maxWidth.ceil().toInt();
+	}
+
+	QFixed minWidthLeft = width, widthLeft = width, last_rBearing = 0, last_rPadding = 0;
+	bool longWordLine = true;
+	for (TextBlocks::const_iterator i = _blocks.cbegin(), e = _blocks.cend(); i != e; ++i) {
+		ITextBlock *b = *i;
+		TextBlockType _btype = b->type();
+		int32 blockHeight = _blockHeight(b, _font);
+		QFixed _rb = _blockRBearing(b);
+
+		if (_btype == TextBlockTNewline) {
+			last_rBearing = _rb;
+			last_rPadding = b->f_rpadding();
+			if (widthLeft < minWidthLeft) {
+				minWidthLeft = widthLeft;
+			}
+			widthLeft = width - (b->f_width() - last_rBearing);
+
+			longWordLine = true;
+			continue;
+		}
+		QFixed lpadding = b->f_lpadding();
+		QFixed newWidthLeft = widthLeft - lpadding - last_rBearing - (last_rPadding + b->f_width() - _rb);
+		if (newWidthLeft >= 0) {
+			last_rBearing = _rb;
+			last_rPadding = b->f_rpadding();
+			widthLeft = newWidthLeft;
+
+			longWordLine = false;
+			continue;
+		}
+
+		if (_btype == TextBlockTText) {
+			TextBlock *t = static_cast<TextBlock*>(b);
+			if (t->_words.isEmpty()) { // no words in this block, spaces only => layout this block in the same line
+				last_rPadding += lpadding;
+
+				longWordLine = false;
+				continue;
+			}
+
+			QFixed f_wLeft = widthLeft;
+			for (TextBlock::TextWords::const_iterator j = t->_words.cbegin(), e = t->_words.cend(), f = j; j != e; ++j) {
+				bool wordEndsHere = (j->width >= 0);
+				QFixed j_width = wordEndsHere ? j->width : -j->width;
+
+				QFixed newWidthLeft = widthLeft - lpadding - last_rBearing - (last_rPadding + j_width - j->f_rbearing());
+				lpadding = 0;
+				if (newWidthLeft >= 0) {
+					last_rBearing = j->f_rbearing();
+					last_rPadding = j->rpadding;
+					widthLeft = newWidthLeft;
+
+					if (wordEndsHere) {
+						longWordLine = false;
+					}
+					if (wordEndsHere || longWordLine) {
+						f_wLeft = widthLeft;
+						f = j + 1;
+					}
+					continue;
+				}
+
+				if (f != j) {
+					j = f;
+					widthLeft = f_wLeft;
+					j_width = (j->width >= 0) ? j->width : -j->width;
+				}
+
+				last_rBearing = j->f_rbearing();
+				last_rPadding = j->rpadding;
+				if (widthLeft < minWidthLeft) {
+					minWidthLeft = widthLeft;
+				}
+				widthLeft = width - (j_width - last_rBearing);
+
+				longWordLine = true;
+				f = j + 1;
+				f_wLeft = widthLeft;
+			}
+			continue;
+		}
+
+		last_rBearing = _rb;
+		last_rPadding = b->f_rpadding();
+		if (widthLeft < minWidthLeft) {
+			minWidthLeft = widthLeft;
+		}
+		widthLeft = width - (b->f_width() - last_rBearing);
+
+		longWordLine = true;
+		continue;
+	}
+	if (widthLeft < minWidthLeft) {
+		minWidthLeft = widthLeft;
+	}
+
+	return (width - minWidthLeft).ceil().toInt();
+}
+
 int32 Text::countHeight(int32 w) const {
 	QFixed width = w;
 	if (width < _minResizeWidth) width = _minResizeWidth;
@@ -2846,10 +2986,10 @@ void Text::draw(QPainter &painter, int32 left, int32 top, int32 w, style::align 
 	p.draw(left, top, w, align, yFrom, yTo, selectedFrom, selectedTo);
 }
 
-void Text::drawElided(QPainter &painter, int32 left, int32 top, int32 w, int32 lines, style::align align, int32 yFrom, int32 yTo, int32 removeFromEnd) const {
+void Text::drawElided(QPainter &painter, int32 left, int32 top, int32 w, int32 lines, style::align align, int32 yFrom, int32 yTo, int32 removeFromEnd, bool breakEverywhere) const {
 //	painter.fillRect(QRect(left, top, w, countHeight(w)), QColor(0, 0, 0, 32)); // debug
 	TextPainter p(&painter, this);
-	p.drawElided(left, top, w, align, lines, yFrom, yTo, removeFromEnd);
+	p.drawElided(left, top, w, align, lines, yFrom, yTo, removeFromEnd, breakEverywhere);
 }
 
 const TextLinkPtr &Text::link(int32 x, int32 y, int32 width, style::align align) const {
@@ -2857,9 +2997,9 @@ const TextLinkPtr &Text::link(int32 x, int32 y, int32 width, style::align align)
 	return p.link(x, y, width, align);
 }
 
-void Text::getState(TextLinkPtr &lnk, bool &inText, int32 x, int32 y, int32 width, style::align align) const {
+void Text::getState(TextLinkPtr &lnk, bool &inText, int32 x, int32 y, int32 width, style::align align, bool breakEverywhere) const {
 	TextPainter p(0, this);
-	p.getState(lnk, inText, x, y, width, align);
+	p.getState(lnk, inText, x, y, width, align, breakEverywhere);
 }
 
 void Text::getSymbol(uint16 &symbol, bool &after, bool &upon, int32 x, int32 y, int32 width, style::align align) const {
@@ -4906,6 +5046,58 @@ EntitiesInText textParseEntities(QString &text, int32 flags, bool rich) { // som
 		result.push_back(mono[monoEntity]);
 	}
 
+	return result;
+}
+
+QString textApplyEntities(const QString &text, const EntitiesInText &entities) {
+	if (entities.isEmpty()) return text;
+
+	QMultiMap<int32, QString> closingTags;
+	QString code(qsl("`")), pre(qsl("```"));
+
+	QString result;
+	int32 size = text.size();
+	const QChar *b = text.constData(), *already = b, *e = b + size;
+	EntitiesInText::const_iterator entity = entities.cbegin(), end = entities.cend();
+	while (entity != end && ((entity->type != EntityInTextCode && entity->type != EntityInTextPre) || entity->length <= 0 || entity->offset >= size)) {
+		++entity;
+	}
+	while (entity != end || !closingTags.isEmpty()) {
+		int32 nextOpenEntity = (entity == end) ? (size + 1) : entity->offset;
+		int32 nextCloseEntity = closingTags.isEmpty() ? (size + 1) : closingTags.cbegin().key();
+		if (nextOpenEntity <= nextCloseEntity) {
+			QString tag = (entity->type == EntityInTextCode) ? code : pre;
+			if (result.isEmpty()) result.reserve(text.size() + entities.size() * pre.size() * 2);
+
+			const QChar *offset = b + nextOpenEntity;
+			if (offset > already) {
+				result.append(already, offset - already);
+				already = offset;
+			}
+			result.append(tag);
+			closingTags.insert(qMin(entity->offset + entity->length, size), tag);
+
+			++entity;
+			while (entity != end && ((entity->type != EntityInTextCode && entity->type != EntityInTextPre) || entity->length <= 0 || entity->offset >= size)) {
+				++entity;
+			}
+		} else {
+			const QChar *offset = b + nextCloseEntity;
+			if (offset > already) {
+				result.append(already, offset - already);
+				already = offset;
+			}
+			result.append(closingTags.cbegin().value());
+			closingTags.erase(closingTags.begin());
+		}
+	}
+	if (result.isEmpty()) {
+		return text;
+	}
+	const QChar *offset = b + size;
+	if (offset > already) {
+		result.append(already, offset - already);
+	}
 	return result;
 }
 

@@ -16,7 +16,7 @@ In addition, as a special exception, the copyright holders give permission
 to link the code of portions of this program with the OpenSSL library.
 
 Full license: https://github.com/telegramdesktop/tdesktop/blob/master/LICENSE
-Copyright (c) 2014-2015 John Preston, https://desktop.telegram.org
+Copyright (c) 2014-2016 John Preston, https://desktop.telegram.org
 */
 #include "stdafx.h"
 
@@ -93,6 +93,7 @@ namespace anim {
 		if (!_clipThreads.isEmpty()) {
 			for (int32 i = 0, l = _clipThreads.size(); i < l; ++i) {
 				_clipThreads.at(i)->quit();
+				DEBUG_LOG(("Waiting for clipThread to finish: %1").arg(i));
 				_clipThreads.at(i)->wait();
 				delete _clipManagers.at(i);
 				delete _clipThreads.at(i);
@@ -142,7 +143,7 @@ void AnimationManager::stop(Animation *obj) {
 	if (_iterating) {
 		_stopping.insert(obj, NullType());
 		if (!_starting.isEmpty()) {
-			_starting.insert(obj, NullType());
+			_starting.remove(obj);
 		}
 	} else {
 		AnimatingObjects::iterator i = _objects.find(obj);
@@ -159,7 +160,9 @@ void AnimationManager::timeout() {
 	_iterating = true;
 	uint64 ms = getms();
 	for (AnimatingObjects::const_iterator i = _objects.begin(), e = _objects.end(); i != e; ++i) {
-		i.key()->step(ms, true);
+		if (!_stopping.contains(i.key())) {
+			i.key()->step(ms, true);
+		}
 	}
 	_iterating = false;
 
@@ -376,6 +379,7 @@ QPixmap ClipReader::current(int32 framew, int32 frameh, int32 outerw, int32 oute
 	frame->request.outerh = outerh * factor;
 
 	QImage cacheForResize;
+	frame->original.setDevicePixelRatio(factor);
 	frame->pix = QPixmap();
 	frame->pix = _prepareFrame(frame->request, frame->original, true, cacheForResize);
 
@@ -425,7 +429,6 @@ void ClipReader::stop() {
 }
 
 void ClipReader::error() {
-	_private = 0;
 	_state = ClipError;
 }
 
